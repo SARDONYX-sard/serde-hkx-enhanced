@@ -1,0 +1,8 @@
+Checks: >
+  -*,
+  performance-unnecessary-copy-initialization,
+  performance-unnecessary-value-param,
+  performance-for-range-copy,
+  performance-implicit-conversion-in-loop,
+  performance-move-const-arg,
+  performance-move-constructor-init

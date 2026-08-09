@@ -1,0 +1,55 @@
+[package]
+name = "hkxc"
+description = "Havok Behavior (De)Serialization CLI(for ver. hk_2010.2.0-r1)"
+version.workspace = true
+categories = ["development-tools"]
+
+authors.workspace = true
+edition.workspace = true
+keywords.workspace = true
+license.workspace = true
+readme.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+clap = { workspace = true } # For CLI
+clap_complete_command = "0.6.1" # Generate auto completion
+color-print = "0.3.7" # To color example help
+indicatif = { version = "0.18.6", features = ["rayon"] } # CLI progress bar
+serde_hkx_features = { workspace = true, features = ["clap", "tracing"] }
+tokio = { workspace = true, features = [
+  "macros",
+  "rt",
+  "time",
+  "rt-multi-thread",
+] }
+tracing = { workspace = true }
+tracing-subscriber = "0.3.20"
+
+# workspace members
+niflib_animation = { path = "../niflib_animation", optional = true }
+
+[build-dependencies]
+ico = "0.5.0"
+resvg = "0.48.1"
+tiny-skia = "0.12.0"
+usvg = "0.48.1"
+winres = "0.1.12"    # Meta information can be added to the exe.
+
+
+[features]
+default = ["color", "kf"]
+
+# ANSI color
+color = []
+
+# Extra output format(json, toml, yaml)
+extra_fmt = ["serde_hkx_features/extra_fmt"]
+
+kf = ["dep:niflib_animation"]
+
+[lints]
+workspace = true

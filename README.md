@@ -1,7 +1,7 @@
 # serde-hkx enhanced library
 
 <div align="center">
-  <a href="https://github.com/SARDONYX-sard/serde-hkx/releases/latest">
+  <a href="https://github.com/SARDONYX-sard/serde-hkx-enhanced/releases/latest">
     <img src="./crates/cli/assets/icon.svg" alt="serde hkx logo" width="150" height="150" />
   </a>
 
@@ -16,21 +16,18 @@
     <a href="https://github.com/SARDONYX-sard/serde-hkx-enhanced/actions/workflows/build-cli.yaml">
       <img src="https://github.com/SARDONYX-sard/serde-hkx-enhanced/actions/workflows/build-cli.yaml/badge.svg?style=flat-square" alt="Build (CLI)">
     </a>
-    <a href="https://github.com/SARDONYX-sard/serde-hkx-enhanced/actions/workflows/test.yaml">
-      <img src="https://github.com/SARDONYX-sard/serde-hkx-enhanced/actions/workflows/test.yaml/badge.svg?style=flat-square" alt="Test (Cargo)">
-    </a>
   </p>
 </div>
 
 ## Features
 
-- [x] skeleton + animation.hkx => kf
-- [x] skeleton + animation.hkx => fbx
+- [x] skeleton + animation.hkx <=> kf
+- [x] skeleton + animation.hkx <=> fbx
 
 The following FIs are used here:
 
-- The niflib FI implemented by cxx for kf
-- The ufbx-write FI implemented by cbindgen
+- The [`niflib`](https://github.com/niftools/niflib) FFI implemented by cxx for kf
+- The [`ufbx-write`](https://github.com/ufbx/ufbx-write) FFI implemented by cbindgen
 
 ## build CLI
 
@@ -48,3 +45,6 @@ Reference:
 
 - <https://github.com/PredatorCZ/HavokLib/blob/master/source/hka_spline_decompressor.hpp>
 - <https://github.com/PredatorCZ/HavokLib/blob/master/source/hka_spline_decompressor.cpp>
+
+![cow_kf](https://github.com/user-attachments/assets/5519e2f4-170c-4489-807e-a302752180e8)
+![cow_fbx](https://github.com/user-attachments/assets/0fe57b5a-9ebc-44e1-9088-a1282a2d3e28)

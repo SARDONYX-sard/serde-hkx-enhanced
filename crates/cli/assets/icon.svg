@@ -2,8 +2,8 @@
   <defs>
     <!-- Background -->
     <linearGradient id="bgGradient" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#111" />
-      <stop offset="100%" stop-color="#2a2a2a" />
+      <stop offset="0%" stop-color="#683b86" />
+      <stop offset="100%" stop-color="#1e2630" />
     </linearGradient>
 
     <!-- Gear highlight -->

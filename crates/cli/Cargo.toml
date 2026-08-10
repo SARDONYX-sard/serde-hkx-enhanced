@@ -1,6 +1,6 @@
 [package]
 name = "hkxc"
-description = "Havok Behavior (De)Serialization CLI(for ver. hk_2010.2.0-r1)"
+description = "Enhanced Havok Behavior (De)Serialization CLI(for ver. hk_2010.2.0-r1)"
 version.workspace = true
 categories = ["development-tools"]
 

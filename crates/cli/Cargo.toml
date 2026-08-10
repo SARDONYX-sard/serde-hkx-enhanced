@@ -42,7 +42,7 @@ winres = "0.1.12"    # Meta information can be added to the exe.
 
 
 [features]
-default = ["color", "fbx"]
+default = ["color", "fbx", "kf"]
 
 # ANSI color
 color = []

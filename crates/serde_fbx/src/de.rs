@@ -38,7 +38,7 @@ pub fn fbx_to_hkx_bytes_vec<P>(
     fbx_animations: &[AnimationInput<'_>],
     fps: f32,
     format: Format,
-) -> std::result::Result<Vec<Vec<u8>>, Error>
+) -> Result<Vec<Vec<u8>>, Error>
 where
     P: AsRef<Path>,
 {
@@ -74,7 +74,7 @@ pub(crate) fn fbx_to_hkx(
     input: &AnimationInput<'_>,
     fps: f32,
     format: Format,
-) -> std::result::Result<Vec<u8>, Error> {
+) -> Result<Vec<u8>, Error> {
     validate_fps(fps)?;
 
     let doc = load_fbx(input.bytes)?;
@@ -93,7 +93,7 @@ pub(crate) fn fbx_to_hkx(
     )?)
 }
 
-fn validate_fps(fps: f32) -> std::result::Result<(), Error> {
+fn validate_fps(fps: f32) -> Result<(), Error> {
     if !fps.is_finite() || fps <= 0.0 {
         return Err(Error::InvalidFps { fps });
     }
@@ -105,7 +105,7 @@ struct FbxDocument {
     scene: ufbx::SceneRoot,
 }
 
-fn load_fbx(bytes: &[u8]) -> std::result::Result<FbxDocument, Error> {
+fn load_fbx(bytes: &[u8]) -> Result<FbxDocument, Error> {
     let scene =
         ufbx::load_memory(bytes, ufbx::LoadOpts::default()).map_err(|error| Error::LoadFbx {
             message: error.info().to_string(),
@@ -122,7 +122,7 @@ struct BoneMapping<'a> {
 fn build_bone_mapping<'a>(
     scene: &'a ufbx::Scene,
     skeleton: &Skeleton,
-) -> std::result::Result<Vec<BoneMapping<'a>>, Error> {
+) -> Result<Vec<BoneMapping<'a>>, Error> {
     let mut nodes_by_name = HashMap::new();
 
     for node in &scene.nodes {
@@ -157,7 +157,7 @@ struct FbxAnimation<'a> {
 fn select_animation<'a>(
     scene: &'a ufbx::SceneRoot,
     requested_name: Option<&str>,
-) -> std::result::Result<FbxAnimation<'a>, Error> {
+) -> Result<FbxAnimation<'a>, Error> {
     let stacks = &scene.anim_stacks;
 
     if stacks.is_empty() {
@@ -181,7 +181,7 @@ fn select_animation<'a>(
 fn create_animation(
     scene: &ufbx::Scene,
     animation: &FbxAnimation,
-) -> std::result::Result<ufbx::AnimRoot, Error> {
+) -> Result<ufbx::AnimRoot, Error> {
     let mut layer_ids = Vec::with_capacity(animation.stack.layers.len());
 
     for layer in &animation.stack.layers {
@@ -216,7 +216,7 @@ fn sample_animation(
     anim: &ufbx::AnimRoot,
     skeleton: &Skeleton,
     fps: f32,
-) -> std::result::Result<Animation, Error> {
+) -> Result<Animation, Error> {
     let duration = (animation.stack.time_end - animation.stack.time_begin) as f32;
     if !duration.is_finite() || duration < 0.0 {
         return Err(Error::InvalidDuration { duration });

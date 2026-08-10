@@ -13,9 +13,12 @@ pub enum Error {
     #[snafu(transparent)]
     Spline { source: serde_spline::error::Error },
 
-    /// The number of transform tracks declared by the animation does not
-    /// match the data required to construct the intermediate representation.
-    InvalidTrackCount { expected: usize, actual: usize },
+    /// The animation contains more transform tracks than the skeleton has bones.
+    #[snafu(display(
+        "Animation transform track count exceeds the skeleton bone count: \
+     animation has {actual} tracks, but the skeleton has {maximum} bones"
+    ))]
+    InvalidTrackCount { actual: usize, maximum: usize },
 
     /// The requested animation frame rate is invalid.
     #[snafu(display("invalid animation FPS: {fps}"))]

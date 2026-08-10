@@ -35,7 +35,7 @@ use crate::error::Error;
 pub(crate) fn export_fbx(
     skeleton: &Skeleton,
     animation: &AnimationInput,
-) -> std::result::Result<Vec<u8>, Error> {
+) -> Result<Vec<u8>, Error> {
     let animation = Animation::from_bytes(skeleton, animation.bytes, animation.path)?;
     validate_animation(skeleton, &animation)?;
 
@@ -84,7 +84,7 @@ fn export_scene(
 fn create_skeleton(
     scene: *mut sys::ufbxw_scene,
     skeleton: &Skeleton,
-) -> std::result::Result<Vec<sys::ufbxw_node>, Error> {
+) -> Result<Vec<sys::ufbxw_node>, Error> {
     let mut nodes = Vec::with_capacity(skeleton.bones.len());
 
     for bone in &skeleton.bones {
@@ -116,7 +116,7 @@ fn set_node_name(
     scene: *mut sys::ufbxw_scene,
     node: sys::ufbxw_node,
     name: &str,
-) -> std::result::Result<(), Error> {
+) -> Result<(), Error> {
     let name = CString::new(name).map_err(|_| Error::ExportFbx {
         message: format!("FBX node name contains an interior NUL byte: {name:?}"),
     })?;
@@ -137,7 +137,7 @@ fn set_node_transform(
     scene: *mut sys::ufbxw_scene,
     node: sys::ufbxw_node,
     transform: &QsTransform,
-) -> std::result::Result<(), Error> {
+) -> Result<(), Error> {
     unsafe {
         sys::ufbxw_node_set_translation(scene, node, to_sys_vec3(transform.transition.clone()));
         sys::ufbxw_node_set_scaling_offset(scene, node, to_sys_vec3(transform.scale.clone()));
@@ -161,7 +161,7 @@ fn set_parent_nodes(
     scene: *mut sys::ufbxw_scene,
     skeleton: &Skeleton,
     nodes: &[sys::ufbxw_node],
-) -> std::result::Result<(), Error> {
+) -> Result<(), Error> {
     for (index, bone) in skeleton.bones.iter().enumerate() {
         if bone.parent_index < 0 {
             continue;
@@ -219,7 +219,7 @@ fn create_animation(
     scene: *mut sys::ufbxw_scene,
     nodes: &[sys::ufbxw_node],
     animation: &Animation,
-) -> std::result::Result<(), Error> {
+) -> Result<(), Error> {
     let stack = unsafe { sys::ufbxw_create_anim_stack(scene) };
     let layer = unsafe { sys::ufbxw_create_anim_layer(scene, stack) };
 
@@ -416,16 +416,13 @@ const fn to_sys_rotation(rotation: &Quaternion) -> sys::ufbxw_quat {
 ///
 /// Returns [`Error::EncoderTransformCountMismatch`] if a sampled frame does
 /// not contain one transform for every skeleton bone.
-fn validate_animation(
-    skeleton: &Skeleton,
-    animation: &Animation,
-) -> std::result::Result<(), Error> {
+fn validate_animation(skeleton: &Skeleton, animation: &Animation) -> Result<(), Error> {
     let bone_count = skeleton.bones.len();
 
-    if animation.num_tracks as usize != bone_count {
+    if animation.num_tracks as usize > skeleton.bones.len() {
         return Err(Error::InvalidTrackCount {
-            expected: bone_count,
             actual: animation.num_tracks as usize,
+            maximum: skeleton.bones.len(),
         });
     }
 

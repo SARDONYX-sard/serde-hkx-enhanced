@@ -37,7 +37,11 @@ pub fn to_hkx(
     format: Format,
 ) -> Result<Vec<u8>, Error> {
     let animation = encode_animation(skeleton, animation, fps, annotations)?;
-    let classes = build_class_map(animation);
+    let root_bone_name = skeleton
+        .bones
+        .first()
+        .map_or("NPC Root [Root]", |bone| bone.name.as_str()); // TODO: valid fallback?
+    let classes = build_class_map(animation, root_bone_name);
     Ok(serialize_class_map(classes, format, "")?)
 }
 
@@ -76,7 +80,10 @@ pub fn to_hkx(
 /// ├── resourceHandles = []
 /// └── children        = []
 /// ```
-fn build_class_map<'ser>(mut animation: hkaSplineCompressedAnimation<'ser>) -> ClassMap<'ser> {
+fn build_class_map<'ser>(
+    mut animation: hkaSplineCompressedAnimation<'ser>,
+    root_bone_name: &'ser str,
+) -> ClassMap<'ser> {
     const ROOT_ID: usize = 1;
     const ANIMATION_CONTAINER_ID: usize = 2;
     const ANIMATION_ID: usize = 3;
@@ -110,6 +117,7 @@ fn build_class_map<'ser>(mut animation: hkaSplineCompressedAnimation<'ser>) -> C
 
     let binding = hkaAnimationBinding {
         __ptr: Some(Pointer::new(BINDING_ID)),
+        m_originalSkeletonName: StringPtr::new(Some(root_bone_name.into())),
         m_animation: Pointer::new(ANIMATION_ID),
         m_transformTrackToBoneIndices: Vec::new(),
         m_floatTrackToFloatSlotIndices: Vec::new(),
@@ -119,7 +127,7 @@ fn build_class_map<'ser>(mut animation: hkaSplineCompressedAnimation<'ser>) -> C
 
     let resource_container = hkMemoryResourceContainer {
         __ptr: Some(Pointer::new(RESOURCE_CONTAINER_ID)),
-        m_name: StringPtr::new(None),
+        m_name: StringPtr::new(Some("".into())), // Not null. empty string
         m_resourceHandles: Vec::new(),
         m_children: Vec::new(),
         ..Default::default()

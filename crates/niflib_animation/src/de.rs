@@ -1,18 +1,14 @@
-mod encoder;
-mod ser_builder;
-
 use rayon::iter::Either;
 use rayon::prelude::*;
+use serde_spline::hkx::{AnimationAnnotation, Skeleton, ser::to_hkx};
 use std::path::Path;
 
-use crate::{
-    error::Error,
-    export::decoder::decode_skeleton_from_bytes,
-    ffi::{self, AnimationAnnotation, Skeleton},
-};
+use crate::{error::Error, ffi};
 
 pub struct AnimationInput<'a> {
+    /// .kf file bytes
     pub bytes: &'a [u8],
+    /// .kf file path
     pub path: &'a Path,
     pub annotations: Vec<AnimationAnnotation>,
 }
@@ -30,7 +26,7 @@ pub struct AnimationInput<'a> {
 /// Returns [`Error`] if the skeleton cannot be decoded, the native KF
 /// conversion fails, the animation is invalid, or the resulting HKX cannot
 /// be encoded.
-pub fn convert_kf<P>(
+pub fn from_kf_bytes_vec_to_hkx<P>(
     skeleton_bytes: &[u8],
     skeleton_path: P,
     kf_animations: &[AnimationInput<'_>],
@@ -39,11 +35,11 @@ pub fn convert_kf<P>(
 where
     P: AsRef<Path>,
 {
-    let skeleton = decode_skeleton_from_bytes(skeleton_bytes, skeleton_path.as_ref())?;
+    let skeleton = Skeleton::from_bytes(skeleton_bytes, skeleton_path.as_ref())?;
 
     let (kf_bytes_list, errors): (Vec<Vec<u8>>, Vec<Error>) = kf_animations
         .par_iter()
-        .partition_map(|animation| match encode(&skeleton, animation, fps) {
+        .partition_map(|animation| match from_kf(&skeleton, animation, fps) {
             Ok(kf) => Either::Left(kf),
             Err(e) => Either::Right(e),
         });
@@ -55,15 +51,16 @@ where
     Err(Error::Errors { errors })
 }
 
-fn encode(
+fn from_kf(
     skeleton: &Skeleton,
     anim_input: &AnimationInput<'_>,
     fps: f32,
 ) -> Result<Vec<u8>, Error> {
-    let animation =
-        ffi::convert_kf(anim_input.bytes, skeleton, fps).map_err(|error| Error::Niflib {
+    let animation = ffi::convert_kf(anim_input.bytes, &ffi::Skeleton::from(skeleton), fps)
+        .map_err(|error| Error::Niflib {
             message: error.to_string(),
-        })?;
+        })?
+        .into();
 
-    encoder::encode(skeleton, &animation, fps, &anim_input.annotations)
+    Ok(to_hkx(skeleton, &animation, fps, &anim_input.annotations)?)
 }

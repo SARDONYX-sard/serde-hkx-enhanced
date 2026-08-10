@@ -2,7 +2,7 @@
 
 use niflib_animation::{
     error::Error,
-    export::{AnimationInput, export_kf},
+    ser::{AnimationInput, to_kf_bytes_vec},
 };
 use std::{
     fs,
@@ -102,7 +102,7 @@ fn convert_explicit(
         })
         .collect::<Vec<_>>();
 
-    let kf_bytes = export_kf(&skeleton_bytes, skeleton_path, &inputs)?;
+    let kf_bytes = to_kf_bytes_vec(&skeleton_bytes, skeleton_path, &inputs)?;
 
     let output_dir = output.map_or_else(
         || {

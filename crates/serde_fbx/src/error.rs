@@ -13,9 +13,7 @@ pub enum Error {
 
     /// An error occurred while decoding spline-compressed animation data.
     #[snafu(transparent)]
-    Spline {
-        source: serde_spline::spline::SplineError,
-    },
+    Spline { source: serde_spline::error::Error },
 
     /// The expected `hkaSplineCompressedAnimation` class was not found.
     SplineAnimationNotFound,

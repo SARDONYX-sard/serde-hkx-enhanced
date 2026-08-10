@@ -10,12 +10,12 @@
 
 use std::ffi::CString;
 
+use havok_types::{QsTransform, Quaternion, Vector4};
+use serde_spline::hkx::{Animation, Skeleton};
 use ufbx_write::sys;
 
-use crate::{
-    common::{Animation, Quaternion, Skeleton, Transform, Vec4},
-    error::Error,
-};
+use super::AnimationInput;
+use crate::error::Error;
 
 /// Exports a skeleton and sampled animation as a binary FBX file.
 ///
@@ -34,26 +34,20 @@ use crate::{
 /// save the FBX scene.
 pub(crate) fn export_fbx(
     skeleton: &Skeleton,
-    animation: &Animation,
+    animation: &AnimationInput,
 ) -> std::result::Result<Vec<u8>, Error> {
-    validate_animation(skeleton, animation)?;
+    let animation = Animation::from_bytes(skeleton, animation.bytes, animation.path)?;
+    validate_animation(skeleton, &animation)?;
 
-    let scene_opts = scene_options();
-
-    let scene = unsafe { sys::ufbxw_create_scene(&scene_opts) };
-
+    let scene = unsafe { sys::ufbxw_create_scene(&scene_options()) };
     if scene.is_null() {
         return Err(Error::ExportFbx {
             message: "ufbxw_create_scene() returned NULL".to_owned(),
         });
     }
 
-    let result = export_scene(scene, skeleton, animation);
-
-    unsafe {
-        sys::ufbxw_free_scene(scene);
-    }
-
+    let result = export_scene(scene, skeleton, &animation);
+    unsafe { sys::ufbxw_free_scene(scene) };
     result
 }
 
@@ -142,15 +136,15 @@ fn set_node_name(
 fn set_node_transform(
     scene: *mut sys::ufbxw_scene,
     node: sys::ufbxw_node,
-    transform: &Transform,
+    transform: &QsTransform,
 ) -> std::result::Result<(), Error> {
     unsafe {
-        sys::ufbxw_node_set_translation(scene, node, to_sys_vec3(transform.translation.clone()));
+        sys::ufbxw_node_set_translation(scene, node, to_sys_vec3(transform.transition.clone()));
         sys::ufbxw_node_set_scaling_offset(scene, node, to_sys_vec3(transform.scale.clone()));
         sys::ufbxw_node_set_rotation_quat(
             scene,
             node,
-            to_sys_rotation(&transform.rotation),
+            to_sys_rotation(&transform.quaternion),
             sys::ufbxw_rotation_order_UFBXW_ROTATION_ORDER_XYZ,
         );
     }
@@ -263,7 +257,7 @@ fn create_animation(
                     scene,
                     translation,
                     time,
-                    to_sys_vec3(transform.translation.clone()),
+                    to_sys_vec3(transform.transition.clone()),
                     sys::ufbxw_keyframe_type_UFBXW_KEYFRAME_LINEAR as u32,
                 );
 
@@ -271,7 +265,7 @@ fn create_animation(
                     scene,
                     rotation,
                     time,
-                    quaternion_to_euler(&transform.rotation),
+                    quaternion_to_euler(&transform.quaternion),
                     sys::ufbxw_keyframe_type_UFBXW_KEYFRAME_LINEAR as u32,
                 );
 
@@ -362,7 +356,7 @@ fn quaternion_to_euler(rotation: &Quaternion) -> sys::ufbxw_vec3 {
     let x = rotation.x as f64;
     let y = rotation.y as f64;
     let z = rotation.z as f64;
-    let w = rotation.w as f64;
+    let w = rotation.scaler as f64;
 
     let sin_x_cos_y = 2.0 * y.mul_add(z, w * x);
     let cos_x_cos_y = 2.0f64.mul_add(-y.mul_add(y, x * x), 1.0);
@@ -393,7 +387,7 @@ fn quaternion_to_euler(rotation: &Quaternion) -> sys::ufbxw_vec3 {
 ///
 /// The fourth component is intentionally discarded because FBX node
 /// translation and scaling are three-dimensional.
-const fn to_sys_vec3(value: Vec4) -> sys::ufbxw_vec3 {
+const fn to_sys_vec3(value: Vector4) -> sys::ufbxw_vec3 {
     sys::ufbxw_vec3 {
         x: value.x as f64,
         y: value.y as f64,
@@ -406,7 +400,7 @@ const fn to_sys_rotation(rotation: &Quaternion) -> sys::ufbxw_quat {
         x: rotation.x as f64,
         y: rotation.y as f64,
         z: rotation.z as f64,
-        w: rotation.w as f64,
+        w: rotation.scaler as f64,
     }
 }
 

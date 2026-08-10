@@ -1,6 +1,6 @@
 //! Convert Havok HKX animations to FBX scenes.
 
-use serde_fbx::export::{AnimationInput, export_fbx};
+use serde_fbx::de::{AnimationInput, export_fbx};
 use std::{
     fs,
     path::{Path, PathBuf},

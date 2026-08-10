@@ -1,12 +1,10 @@
-mod encoder;
-mod ser_builder;
-
+use havok_types::{QsTransform, Quaternion, Vector4};
 use rayon::{iter::Either, prelude::*};
+use serde_spline::hkx::ser::to_hkx;
 use std::collections::HashMap;
 use std::path::Path;
 
-use crate::common::{Animation, AnimationAnnotation, AnimationFrame, Skeleton, Transform};
-use crate::export::decoder::decode_skeleton_from_bytes;
+use serde_spline::hkx::{Animation, AnimationAnnotation, AnimationFrame, Skeleton};
 
 use crate::Error;
 
@@ -29,18 +27,11 @@ pub struct AnimationInput<'a> {
 
 /// Converts FBX animations into Havok HKX animations.
 ///
-/// The skeleton is decoded from the supplied HKX skeleton bytes. Each FBX
-/// animation is then loaded and sampled against that skeleton before being
-/// spline-compressed and serialized as an HKX animation.
-///
-/// This function performs no file I/O.
-///
 /// # Errors
-///
-/// Returns [`Error`] if the skeleton cannot be decoded, an FBX animation
+/// If the skeleton cannot be decoded, an FBX animation
 /// cannot be loaded or sampled, or the resulting HKX animation cannot be
 /// encoded.
-pub fn convert_fbx<P>(
+pub fn fbx_to_hkx_bytes_vec<P>(
     skeleton_bytes: &[u8],
     skeleton_path: P,
     fbx_animations: &[AnimationInput<'_>],
@@ -49,16 +40,11 @@ pub fn convert_fbx<P>(
 where
     P: AsRef<Path>,
 {
-    let skeleton =
-        decode_skeleton_from_bytes(skeleton_bytes, skeleton_path.as_ref()).map_err(|error| {
-            Error::InvalidSkeleton {
-                message: error.to_string(),
-            }
-        })?;
+    let skeleton = Skeleton::from_bytes(skeleton_bytes, skeleton_path.as_ref())?;
 
     let (outputs, errors): (Vec<Vec<u8>>, Vec<Error>) =
         fbx_animations.par_iter().partition_map(|animation| {
-            match convert_animation(&skeleton, animation, fps) {
+            match kf_to_hkx(&skeleton, animation, fps) {
                 Ok(output) => Either::Left(output),
                 Err(error) => Either::Right(error),
             }
@@ -81,7 +67,7 @@ where
 /// Returns [`Error`] if the FPS is invalid, an FBX document cannot be
 /// loaded, an animation stack cannot be found, an FBX bone cannot be mapped
 /// to the target skeleton, or HKX encoding fails.
-pub(crate) fn convert_animation(
+pub(crate) fn kf_to_hkx(
     skeleton: &Skeleton,
     input: &AnimationInput<'_>,
     fps: f32,
@@ -95,7 +81,7 @@ pub(crate) fn convert_animation(
     let anim = create_animation(scene_root, &animation)?;
     let animation = sample_animation(scene_root, &animation, &anim, skeleton, fps)?;
 
-    self::encoder::encode(skeleton, &animation, fps, &input.annotations)
+    Ok(to_hkx(skeleton, &animation, fps, &input.annotations)?)
 }
 
 fn validate_fps(fps: f32) -> std::result::Result<(), Error> {
@@ -214,13 +200,11 @@ fn sample_animation(
     fps: f32,
 ) -> std::result::Result<Animation, Error> {
     let duration = (animation.stack.time_end - animation.stack.time_begin) as f32;
-
     if !duration.is_finite() || duration < 0.0 {
         return Err(Error::InvalidDuration { duration });
     }
 
     let num_frames = (duration * fps).ceil() as u32 + 1;
-
     if num_frames == 0 {
         return Err(Error::InvalidFrameCount {
             count: num_frames as u64,
@@ -230,12 +214,9 @@ fn sample_animation(
     let mapping = build_bone_mapping(scene, skeleton)?;
 
     let mut frames = Vec::with_capacity(num_frames as usize);
-
     for frame_index in 0..num_frames {
         let time = frame_index as f64 / fps as f64;
-
         let transforms = sample_frame(scene, anim, &mapping, skeleton, time);
-
         frames.push(AnimationFrame { transforms });
     }
 
@@ -254,37 +235,52 @@ fn sample_frame(
     mapping: &[BoneMapping],
     skeleton: &Skeleton,
     time: f64,
-) -> Vec<Transform> {
-    let mut transforms = vec![Transform::identity(); skeleton.bones.len()];
+) -> Vec<QsTransform> {
+    const QS_TRANSFORM_IDENTITY: QsTransform = QsTransform {
+        transition: Vector4 {
+            x: 0.0,
+            y: 0.0,
+            z: 0.0,
+            w: 0.0,
+        },
+        quaternion: Quaternion {
+            x: 0.0,
+            y: 0.0,
+            z: 0.0,
+            scaler: 1.0,
+        },
+        scale: Vector4 {
+            x: 1.0,
+            y: 1.0,
+            z: 1.0,
+            w: 1.0,
+        },
+    };
 
+    let mut transforms = vec![QS_TRANSFORM_IDENTITY; skeleton.bones.len()];
     for mapping in mapping {
-        let node = &scene.nodes[mapping.node_index];
-
-        let transform = node.evaluate_transform(anim, time);
-
+        let transform = scene.nodes[mapping.node_index].evaluate_transform(anim, time);
         transforms[mapping.track_index] = convert_transform(transform);
     }
 
     transforms
 }
 
-const fn convert_transform(transform: ufbx::Transform) -> crate::common::Transform {
-    use crate::common::{Quaternion, Transform, Vec4};
-
-    Transform {
-        translation: Vec4 {
+const fn convert_transform(transform: ufbx::Transform) -> QsTransform {
+    QsTransform {
+        transition: Vector4 {
             x: transform.translation.x as f32,
             y: transform.translation.y as f32,
             z: transform.translation.z as f32,
             w: 0.0,
         },
-        rotation: Quaternion {
+        quaternion: Quaternion {
             x: transform.rotation.x as f32,
             y: transform.rotation.y as f32,
             z: transform.rotation.z as f32,
-            w: transform.rotation.w as f32,
+            scaler: transform.rotation.w as f32,
         },
-        scale: Vec4 {
+        scale: Vector4 {
             x: transform.scale.x as f32,
             y: transform.scale.y as f32,
             z: transform.scale.z as f32,

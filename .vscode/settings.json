@@ -1,4 +1,4 @@
 {
   "rust-analyzer.check.command": "clippy",
-  "cSpell.words": ["Bbox", "Gamebryo", "Havok", "niflib", "serde", "skyrim", "ufbx"]
+  "cSpell.words": ["Bbox", "Gamebryo", "Havok", "hexdump", "hkxc", "niflib", "serde", "skyrim", "ufbx"]
 }

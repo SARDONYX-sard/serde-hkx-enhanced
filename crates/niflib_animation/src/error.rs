@@ -1,7 +1,6 @@
 use std::path::PathBuf;
 
 use serde_hkx_features::error::Error as SerdeHkxFeaturesError;
-use serde_spline::spline::SplineError;
 
 #[derive(Debug)]
 pub enum Error {
@@ -14,7 +13,9 @@ pub enum Error {
     SerdeHkx(SerdeHkxFeaturesError),
 
     /// An error occurred while decoding spline-compressed animation data.
-    Spline(SplineError),
+    Spline {
+        source: serde_spline::error::Error,
+    },
 
     /// The expected `hkaSplineCompressedAnimation` class was not found.
     SplineAnimationNotFound,
@@ -103,9 +104,10 @@ impl From<SerdeHkxFeaturesError> for Error {
     }
 }
 
-impl From<SplineError> for Error {
-    fn from(error: SplineError) -> Self {
-        Self::Spline(error)
+impl From<serde_spline::error::Error> for Error {
+    #[inline]
+    fn from(error: serde_spline::error::Error) -> Self {
+        Self::Spline { source: error }
     }
 }
 
@@ -126,7 +128,7 @@ impl std::fmt::Display for Error {
 
             Self::SerdeHkx(error) => write!(f, "{error}"),
 
-            Self::Spline(error) => write!(f, "spline decoding failed: {error}"),
+            Self::Spline { source: error } => write!(f, "spline decoding failed: {error}"),
 
             Self::SplineAnimationNotFound => {
                 f.write_str("hkaSplineCompressedAnimation was not found")
@@ -217,7 +219,7 @@ impl std::error::Error for Error {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::SerdeHkx(error) => Some(error),
-            Self::Spline(error) => Some(error),
+            Self::Spline { source } => Some(source),
             _ => None,
         }
     }

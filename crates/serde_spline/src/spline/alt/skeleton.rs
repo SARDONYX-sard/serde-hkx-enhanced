@@ -4,8 +4,6 @@ use serde_hkx_features::{ClassMap, Result};
 
 use havok_types::QsTransform;
 
-use crate::spline::bail;
-
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Skeleton {
     pub bone_names: Vec<String>,
@@ -19,7 +17,15 @@ pub(crate) fn into_skeleton(class_map: ClassMap) -> Result<Skeleton> {
         .into_iter()
         .find(|(_, class)| matches!(class, Classes::hkaSkeleton(_)))
     else {
-        bail!("not found hkaSkeleton");
+        return Err(serde_hkx_features::error::Error::SerError {
+            input: std::path::PathBuf::from("test"),
+            source: Box::new(serde_hkx_features::serde::ser::SerError::Hkx {
+                source: <serde_hkx::errors::ser::Error as havok_serde::ser::Error>::custom(
+                    "not found hkaSkeleton",
+                ),
+                location: snafu::location!(),
+            }),
+        });
     };
 
     let bone_names = skeleton

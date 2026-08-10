@@ -1,117 +1,99 @@
-use havok_types::Vector4;
-use serde_spline::spline::math::{
+use crate::spline::SplineDecompressor;
+use crate::spline::math::{
     QuatA16, SplineDynamicTrackQuat, SplineDynamicTrackVector, SplineStaticTrack, SplineTrackQuat,
     SplineTrackType, SplineTrackVector, TransformMask, TransformSplineBlock, TransformTrack,
     TransformType,
 };
+use havok_types::Vector4;
 
-use super::encoder::RawTransformTrack;
-use crate::common::{Animation, Skeleton};
+use super::ser::RawTransformTrack;
+use super::{Animation, Skeleton};
 use crate::error::Error;
 
-/// Builds fully-evaluable spline blocks directly from an FFI `Animation` and
-/// its `Skeleton`.
-///
-/// Every dynamic track's control points are simply the animation's own
-/// per-frame samples — degree 1, clamped-uniform knots — so evaluation at
-/// any sample frame reproduces the original value exactly (up to whatever
-/// byte-level quantization is applied later during serialization).
-///
-/// This produces the same `TransformSplineBlock` shape that
-/// `TransformSplineBlock::decode` produces from parsed bytes, so the result
-/// can be evaluated with `get_value()` directly — useful for verifying the
-/// classification logic before touching byte-level serialization at all.
-///
-/// All frames become a single block (Skyrim animations are almost always
-/// single-block), so the returned `Vec` currently always has length 1; it's
-/// still a `Vec` to keep the return type stable if multi-block splitting is
-/// added later.
-///
-/// Note: each block's `TransformMask::quantization_types`-derived fields are
-/// left at their default value here. Quantization only matters once a block
-/// is turned into bytes (`m_data`), which is a separate, later step; nothing
-/// in this function reads or writes quantized bytes.
-///
-/// # Errors
-///
-/// Returns [`Error`] if `animation.frames.len()` doesn't match
-/// `animation.num_frames`, if any frame's transform count doesn't match
-/// `skeleton.bones.len()`, or if the animation has zero frames or the
-/// skeleton has zero bones.
-pub(crate) fn from_transform_tracks_decomposer(
-    skeleton: &Skeleton,
-    animation: &Animation,
-) -> Result<Vec<TransformSplineBlock>, Error> {
-    let num_tracks = skeleton.bones.len();
-    let num_frames = animation.num_frames as usize;
+impl SplineDecompressor {
+    /// Builds fully-evaluable spline blocks directly from an `Animation` and
+    /// its `Skeleton`.
+    ///
+    /// # Errors
+    /// - If `animation.frames.len()` doesn't match `animation.num_frames`
+    /// - If any frame's transform count doesn't match `skeleton.bones.len()`, or if the animation has zero frames or the skeleton has zero bones.
+    pub(crate) fn from_animation(
+        skeleton: &Skeleton,
+        animation: &Animation,
+    ) -> Result<Self, Error> {
+        let num_tracks = skeleton.bones.len();
+        let num_frames = animation.num_frames as usize;
 
-    if num_frames == 0 || num_tracks == 0 {
-        return Err(Error::EncoderEmptyAnimation);
-    }
+        if num_frames == 0 || num_tracks == 0 {
+            return Err(Error::EmptyAnimation);
+        }
 
-    if animation.frames.len() != num_frames {
-        return Err(Error::InvalidTrackCount {
-            expected: num_frames,
-            actual: animation.frames.len(),
-        });
-    }
-
-    // Transpose frame-major storage (`frames[frame].transforms[track]`)
-    // into track-major raw samples, one entry per bone.
-    let mut raw_tracks: Vec<RawTransformTrack> = (0..num_tracks)
-        .map(|_| RawTransformTrack {
-            position: core::array::from_fn(|_| Vec::with_capacity(num_frames)),
-            rotation: Vec::with_capacity(num_frames),
-            scale: core::array::from_fn(|_| Vec::with_capacity(num_frames)),
-        })
-        .collect();
-
-    for (frame_index, frame) in animation.frames.iter().enumerate() {
-        if frame.transforms.len() != num_tracks {
-            return Err(Error::EncoderTransformCountMismatch {
-                frame_index,
-                expected: num_tracks,
-                actual: frame.transforms.len(),
+        if animation.frames.len() != num_frames {
+            return Err(Error::FrameCountMismatch {
+                expected: num_frames,
+                actual: animation.frames.len(),
             });
         }
 
-        for (track, transform) in raw_tracks.iter_mut().zip(&frame.transforms) {
-            track.position[0].push(transform.translation.x);
-            track.position[1].push(transform.translation.y);
-            track.position[2].push(transform.translation.z);
+        // Transpose frame-major storage (`frames[frame].transforms[track]`)
+        // into track-major raw samples, one entry per bone.
+        let mut raw_tracks: Vec<RawTransformTrack> = (0..num_tracks)
+            .map(|_| RawTransformTrack {
+                position: core::array::from_fn(|_| Vec::with_capacity(num_frames)),
+                rotation: Vec::with_capacity(num_frames),
+                scale: core::array::from_fn(|_| Vec::with_capacity(num_frames)),
+            })
+            .collect();
 
-            track.rotation.push([
-                transform.rotation.x,
-                transform.rotation.y,
-                transform.rotation.z,
-                transform.rotation.w,
-            ]);
+        for (frame_index, frame) in animation.frames.iter().enumerate() {
+            if frame.transforms.len() != num_tracks {
+                return Err(Error::TransformCountMismatch {
+                    frame_index,
+                    expected: num_tracks,
+                    actual: frame.transforms.len(),
+                });
+            }
 
-            track.scale[0].push(transform.scale.x);
-            track.scale[1].push(transform.scale.y);
-            track.scale[2].push(transform.scale.z);
+            for (track, transform) in raw_tracks.iter_mut().zip(&frame.transforms) {
+                track.position[0].push(transform.transition.x);
+                track.position[1].push(transform.transition.y);
+                track.position[2].push(transform.transition.z);
+
+                track.rotation.push([
+                    transform.quaternion.x,
+                    transform.quaternion.y,
+                    transform.quaternion.z,
+                    transform.quaternion.scaler,
+                ]);
+
+                track.scale[0].push(transform.scale.x);
+                track.scale[1].push(transform.scale.y);
+                track.scale[2].push(transform.scale.z);
+            }
         }
+
+        // Classify every bone's components and build the evaluable spline data
+        // (masks + tracks) in one pass.
+        let mut masks = Vec::with_capacity(num_tracks);
+        let mut tracks = Vec::with_capacity(num_tracks);
+
+        for raw in &raw_tracks {
+            let (position, position_kinds) = build_vector_track(&raw.position, 0.0, num_frames);
+            let (rotation, rotation_kind) = build_rotation_track(&raw.rotation, num_frames);
+            let (scale, scale_kinds) = build_vector_track(&raw.scale, 1.0, num_frames);
+
+            masks.push(build_mask(position_kinds, rotation_kind, scale_kinds));
+            tracks.push(TransformTrack {
+                position,
+                rotation,
+                scale,
+            });
+        }
+
+        Ok(Self {
+            blocks: vec![TransformSplineBlock { masks, tracks }],
+        })
     }
-
-    // Classify every bone's components and build the evaluable spline data
-    // (masks + tracks) in one pass.
-    let mut masks = Vec::with_capacity(num_tracks);
-    let mut tracks = Vec::with_capacity(num_tracks);
-
-    for raw in &raw_tracks {
-        let (position, position_kinds) = build_vector_track(&raw.position, 0.0, num_frames);
-        let (rotation, rotation_kind) = build_rotation_track(&raw.rotation, num_frames);
-        let (scale, scale_kinds) = build_vector_track(&raw.scale, 1.0, num_frames);
-
-        masks.push(build_mask(position_kinds, rotation_kind, scale_kinds));
-        tracks.push(TransformTrack {
-            position,
-            rotation,
-            scale,
-        });
-    }
-
-    Ok(vec![TransformSplineBlock { masks, tracks }])
 }
 
 /// Classifies one axis as Identity / Static / Dynamic and builds the

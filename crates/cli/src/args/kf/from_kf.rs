@@ -1,6 +1,6 @@
 //! Apply Gamebryo KF animation to Havok HKX animation.
 use niflib_animation::{
-    convert::{AnimationInput, convert_kf},
+    de::{AnimationInput, from_kf_bytes_vec_to_hkx},
     error::Error,
 };
 use std::{
@@ -12,9 +12,9 @@ pub const EXAMPLES: &str = color_print::cstr!(
     r#"Examples
 
 - <blue!>Apply kf to hkx</blue!>
-  <cyan!>hkxc from-kf -i</cyan!> ./defaultmale.hkx <cyan!>-a</cyan!> ./idle.kf <cyan!>-o</cyan!> ./defaultmale_patched.hkx
+  <cyan!>hkxc from-kf -s</cyan!> ./skeleton.hkx <cyan!>-a</cyan!> ./idle.kf <cyan!>-o</cyan!> ./idle.hkx
 - <blue!>Convert multiple kf animations</blue!>
-  <cyan!>hkxc from-kf -i</cyan!> ./defaultmale.hkx <cyan!>-a</cyan!> ./idle.kf ./walk.kf <cyan!>-o</cyan!> ./out/
+  <cyan!>hkxc from-kf -s</cyan!> ./skeleton.hkx <cyan!>-a</cyan!> ./idle.kf ./walk.kf <cyan!>-o</cyan!> ./out/
   "#
 );
 
@@ -22,8 +22,8 @@ pub const EXAMPLES: &str = color_print::cstr!(
 #[clap(arg_required_else_help = true, after_long_help = EXAMPLES)]
 pub(crate) struct Args {
     /// Input skeleton HKX file.
-    #[clap(short, long)]
-    pub input: PathBuf,
+    #[clap(short = 's', long, value_name = "SKELETON")]
+    pub skeleton: PathBuf,
 
     /// One or more KF animation files to convert.
     #[clap(short = 'a', long, value_name = "KF", num_args = 1..)]
@@ -70,7 +70,7 @@ pub async fn from_kf(args: &Args) -> Result<(), Error> {
         .into());
     }
 
-    let skeleton_bytes = fs::read(&args.input)
+    let skeleton_bytes = fs::read(&args.skeleton)
         .map_err(|source| serde_hkx_features::error::Error::IoError { source })?;
 
     let mut animation_bytes = Vec::with_capacity(args.anim.len());
@@ -91,7 +91,8 @@ pub async fn from_kf(args: &Args) -> Result<(), Error> {
         })
         .collect::<Vec<_>>();
 
-    let hkx_bytes = convert_kf(&skeleton_bytes, &args.input, &animations, args.fps)?;
+    let hkx_bytes =
+        from_kf_bytes_vec_to_hkx(&skeleton_bytes, &args.skeleton, &animations, args.fps)?;
 
     let output = args.output.as_deref();
 

@@ -249,77 +249,7 @@ use super::math::{
     SplineStaticTrack, SplineTrackQuat, SplineTrackType, SplineTrackVector, TransformMask,
     TransformSplineBlock, TransformTrack, TransformType, Vec4A16,
 };
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SplineError {
-    /// The input ended before the requested number of bytes was available.
-    ///
-    /// This usually means that the block is truncated or that an earlier
-    /// value was decoded with the wrong size/alignment.
-    UnexpectedEof,
-
-    /// The input contains an invalid quantization type.
-    ///
-    /// Quantization types determine how the following bytes are interpreted.
-    /// An invalid value means the decoder cannot determine the layout of the
-    /// following data.
-    InvalidQuantizationType(u8),
-
-    /// The input contains an invalid spline degree.
-    ///
-    /// The degree controls how many control points participate in the
-    /// evaluation of a spline segment. This implementation supports degrees
-    /// up to four.
-    InvalidDegree(u8),
-
-    /// The spline knot vector is malformed.
-    ///
-    /// A knot vector must contain enough entries for the declared degree and
-    /// control-point count, and its denominators must be valid during basis
-    /// function evaluation.
-    InvalidKnotVector,
-
-    /// The spline control-point count is invalid.
-    ///
-    /// A dynamic spline must contain at least one control point.
-    InvalidControlPointCount,
-
-    /// A spline evaluation index is outside the control-point array.
-    ///
-    /// This indicates an inconsistency between the declared degree, knot
-    /// vector, and number of control points.
-    InvalidControlPointIndex,
-
-    /// The decompressed block does not contain the requested track.
-    TrackOutOfRange,
-
-    /// The input data cannot be represented by the spline format.
-    ///
-    /// This is primarily used by the encoder when a requested representation
-    /// conflicts with the information expressible by the transform mask.
-    InvalidData(&'static str),
-}
-
-impl core::fmt::Display for SplineError {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            Self::UnexpectedEof => f.write_str("unexpected end of spline data"),
-            Self::InvalidQuantizationType(value) => {
-                write!(f, "invalid quantization type: {value}")
-            }
-            Self::InvalidDegree(value) => {
-                write!(f, "invalid spline degree: {value}")
-            }
-            Self::InvalidKnotVector => f.write_str("invalid spline knot vector"),
-            Self::InvalidControlPointCount => f.write_str("invalid spline control-point count"),
-            Self::InvalidControlPointIndex => f.write_str("invalid spline control-point index"),
-            Self::TrackOutOfRange => f.write_str("track index is out of range"),
-            Self::InvalidData(message) => f.write_str(message),
-        }
-    }
-}
-
-impl core::error::Error for SplineError {}
+use crate::error::Error;
 
 struct Reader<'a> {
     data: &'a [u8],
@@ -331,46 +261,40 @@ impl<'a> Reader<'a> {
         Self { data, position: 0 }
     }
 
-    fn read_u8(&mut self) -> core::result::Result<u8, SplineError> {
-        let value = *self
-            .data
-            .get(self.position)
-            .ok_or(SplineError::UnexpectedEof)?;
+    fn read_u8(&mut self) -> core::result::Result<u8, Error> {
+        let value = *self.data.get(self.position).ok_or(Error::UnexpectedEof)?;
 
         self.position += 1;
         Ok(value)
     }
 
-    fn read_u16_le(&mut self) -> core::result::Result<u16, SplineError> {
+    fn read_u16_le(&mut self) -> core::result::Result<u16, Error> {
         let bytes = self.read_array::<2>()?;
         Ok(u16::from_le_bytes(bytes))
     }
 
-    fn read_u32_le(&mut self) -> core::result::Result<u32, SplineError> {
+    fn read_u32_le(&mut self) -> core::result::Result<u32, Error> {
         let bytes = self.read_array::<4>()?;
         Ok(u32::from_le_bytes(bytes))
     }
 
     #[expect(unused)]
-    fn read_u64_le(&mut self) -> core::result::Result<u64, SplineError> {
+    fn read_u64_le(&mut self) -> core::result::Result<u64, Error> {
         let bytes = self.read_array::<8>()?;
         Ok(u64::from_le_bytes(bytes))
     }
 
-    fn read_f32_le(&mut self) -> core::result::Result<f32, SplineError> {
+    fn read_f32_le(&mut self) -> core::result::Result<f32, Error> {
         Ok(f32::from_bits(self.read_u32_le()?))
     }
 
-    fn read_array<const N: usize>(&mut self) -> core::result::Result<[u8; N], SplineError> {
-        let end = self
-            .position
-            .checked_add(N)
-            .ok_or(SplineError::UnexpectedEof)?;
+    fn read_array<const N: usize>(&mut self) -> core::result::Result<[u8; N], Error> {
+        let end = self.position.checked_add(N).ok_or(Error::UnexpectedEof)?;
 
         let bytes = self
             .data
             .get(self.position..end)
-            .ok_or(SplineError::UnexpectedEof)?;
+            .ok_or(Error::UnexpectedEof)?;
 
         let mut result = [0u8; N];
         result.copy_from_slice(bytes);
@@ -381,21 +305,21 @@ impl<'a> Reader<'a> {
     }
 
     /// Skip `<count>` bytes.
-    fn skip(&mut self, count: usize) -> core::result::Result<(), SplineError> {
+    fn skip(&mut self, count: usize) -> core::result::Result<(), Error> {
         let end = self
             .position
             .checked_add(count)
-            .ok_or(SplineError::UnexpectedEof)?;
+            .ok_or(Error::UnexpectedEof)?;
 
         if end > self.data.len() {
-            return Err(SplineError::UnexpectedEof);
+            return Err(Error::UnexpectedEof);
         }
 
         self.position = end;
         Ok(())
     }
 
-    fn align(&mut self, alignment: usize) -> core::result::Result<(), SplineError> {
+    fn align(&mut self, alignment: usize) -> core::result::Result<(), Error> {
         debug_assert!(alignment.is_power_of_two());
 
         let mask = alignment - 1;
@@ -404,16 +328,16 @@ impl<'a> Reader<'a> {
         self.skip(aligned.saturating_sub(self.position))
     }
 
-    fn read_bytes(&mut self, count: usize) -> core::result::Result<&'a [u8], SplineError> {
+    fn read_bytes(&mut self, count: usize) -> core::result::Result<&'a [u8], Error> {
         let end = self
             .position
             .checked_add(count)
-            .ok_or(SplineError::UnexpectedEof)?;
+            .ok_or(Error::UnexpectedEof)?;
 
         let result = self
             .data
             .get(self.position..end)
-            .ok_or(SplineError::UnexpectedEof)?;
+            .ok_or(Error::UnexpectedEof)?;
 
         self.position = end;
 
@@ -439,7 +363,7 @@ impl<'a> Reader<'a> {
 /// The constants below are therefore part of the binary encoding and
 /// should not be replaced with a generic "epsilon" or generic
 /// quantization formula.
-fn read32_quat(reader: &mut Reader<'_>) -> core::result::Result<QuatA16, SplineError> {
+fn read32_quat(reader: &mut Reader<'_>) -> core::result::Result<QuatA16, Error> {
     const R_MASK: u32 = (1 << 10) - 1;
     const R_FRAC: f32 = 1.0 / ((1u32 << 10) - 1) as f32;
     const PI_4: f32 = 0.25 * PI;
@@ -487,7 +411,7 @@ fn read32_quat(reader: &mut Reader<'_>) -> core::result::Result<QuatA16, SplineE
     Ok(QuatA16::from_vec4(value))
 }
 
-fn read40_quat(reader: &mut Reader<'_>) -> core::result::Result<QuatA16, SplineError> {
+fn read40_quat(reader: &mut Reader<'_>) -> core::result::Result<QuatA16, Error> {
     let bytes = reader.read_bytes(5)?;
 
     let va = bytes[0] as u32 | (((bytes[1] & 0x0F) as u32) << 8);
@@ -530,7 +454,7 @@ fn read40_quat(reader: &mut Reader<'_>) -> core::result::Result<QuatA16, SplineE
     Ok(QuatA16::new(result[0], result[1], result[2], result[3]))
 }
 
-fn read48_quat(reader: &mut Reader<'_>) -> core::result::Result<QuatA16, SplineError> {
+fn read48_quat(reader: &mut Reader<'_>) -> core::result::Result<QuatA16, Error> {
     const MASK: u32 = (1 << 15) - 1;
     const FRACTION: f32 = 0.000043161;
 
@@ -564,23 +488,18 @@ fn read48_quat(reader: &mut Reader<'_>) -> core::result::Result<QuatA16, SplineE
 fn read_quat(
     reader: &mut Reader<'_>,
     quantization: QuantizationType,
-) -> core::result::Result<QuatA16, SplineError> {
+) -> core::result::Result<QuatA16, Error> {
     match quantization {
         QuantizationType::Bit32 => read32_quat(reader),
-
         QuantizationType::Bit40 => read40_quat(reader),
-
         QuantizationType::Bit48 => read48_quat(reader),
-
         QuantizationType::Uncompressed => {
             let x = reader.read_f32_le()?;
             let y = reader.read_f32_le()?;
             let z = reader.read_f32_le()?;
             let w = reader.read_f32_le()?;
-
             Ok(QuatA16::new(x, y, z, w))
         }
-
         _ => Ok(QuatA16::identity()),
     }
 }
@@ -590,13 +509,13 @@ fn find_knot_span(
     value: f32,
     control_point_count: usize,
     knots: &[f32],
-) -> core::result::Result<usize, SplineError> {
+) -> core::result::Result<usize, Error> {
     if control_point_count == 0 {
-        return Err(SplineError::InvalidControlPointCount);
+        return Err(Error::InvalidControlPointCount);
     }
 
     if knots.len() <= control_point_count {
-        return Err(SplineError::InvalidKnotVector);
+        return Err(Error::InvalidKnotVector);
     }
 
     if value >= knots[control_point_count] {
@@ -607,7 +526,7 @@ fn find_knot_span(
     let mut high = control_point_count;
 
     if low >= knots.len() || high >= knots.len() {
-        return Err(SplineError::InvalidKnotVector);
+        return Err(Error::InvalidKnotVector);
     }
 
     let mut mid = (low + high) / 2;
@@ -622,7 +541,7 @@ fn find_knot_span(
         mid = (low + high) / 2;
 
         if mid + 1 >= knots.len() {
-            return Err(SplineError::InvalidKnotVector);
+            return Err(Error::InvalidKnotVector);
         }
     }
 
@@ -635,12 +554,12 @@ fn get_single_point<T>(
     frame: f32,
     knots: &[f32],
     control_points: &[T],
-) -> core::result::Result<T, SplineError>
+) -> core::result::Result<T, Error>
 where
     T: Copy + Add<Output = T> + Mul<f32, Output = T>,
 {
     if control_points.is_empty() {
-        return Err(SplineError::InvalidControlPointCount);
+        return Err(Error::InvalidControlPointCount);
     }
 
     // The implementation below is the Cox-de Boor recurrence for evaluating
@@ -664,11 +583,11 @@ where
     //
     // The resulting value is the weighted sum of those control points.
     if degree > 4 {
-        return Err(SplineError::InvalidDegree(degree as u8));
+        return Err(Error::InvalidDegree(degree as u8));
     }
 
     if knot_span < degree {
-        return Err(SplineError::InvalidControlPointIndex);
+        return Err(Error::InvalidControlPointIndex);
     }
 
     let mut basis = [0.0f32; 5];
@@ -680,13 +599,13 @@ where
             let right_index = knot_span + i - j;
 
             if right_index >= knots.len() || left_index >= knots.len() {
-                return Err(SplineError::InvalidKnotVector);
+                return Err(Error::InvalidKnotVector);
             }
 
             let denominator = knots[right_index] - knots[left_index];
 
             if denominator == 0.0 {
-                return Err(SplineError::InvalidKnotVector);
+                return Err(Error::InvalidKnotVector);
             }
 
             let a = (frame - knots[left_index]) / denominator;
@@ -702,24 +621,24 @@ where
     // control-point array is not evaluated for every frame.
     let first_index = knot_span
         .checked_sub(degree)
-        .ok_or(SplineError::InvalidControlPointIndex)?;
+        .ok_or(Error::InvalidControlPointIndex)?;
 
     let first = control_points
         .get(first_index)
         .copied()
-        .ok_or(SplineError::InvalidControlPointIndex)?;
+        .ok_or(Error::InvalidControlPointIndex)?;
 
     let mut result = first * basis[degree];
 
     for i in 1..=degree {
         let index = knot_span
             .checked_sub(degree - i)
-            .ok_or(SplineError::InvalidControlPointIndex)?;
+            .ok_or(Error::InvalidControlPointIndex)?;
 
         let control_point = control_points
             .get(index)
             .copied()
-            .ok_or(SplineError::InvalidControlPointIndex)?;
+            .ok_or(Error::InvalidControlPointIndex)?;
 
         result = result + control_point * basis[degree - i];
     }
@@ -733,14 +652,14 @@ fn get_single_scalar_point(
     frame: f32,
     knots: &[f32],
     control_points: &[f32],
-) -> core::result::Result<f32, SplineError> {
+) -> core::result::Result<f32, Error> {
     get_single_point(knot_span, degree, frame, knots, control_points)
 }
 
 fn evaluate_vector_track(
     track: &SplineDynamicTrackVector,
     local_frame: f32,
-) -> core::result::Result<Vector4, SplineError> {
+) -> core::result::Result<Vector4, Error> {
     // Position and scale are represented as three independent scalar
     // splines:
     //
@@ -811,7 +730,7 @@ fn evaluate_vector_track(
 fn evaluate_quat_track(
     track: &SplineDynamicTrackQuat,
     local_frame: f32,
-) -> core::result::Result<QuatA16, SplineError> {
+) -> core::result::Result<QuatA16, Error> {
     let knot_span = find_knot_span(
         track.degree as usize,
         local_frame,
@@ -828,9 +747,7 @@ fn evaluate_quat_track(
     )
 }
 
-fn read_transform_mask(
-    reader: &mut Reader<'_>,
-) -> core::result::Result<TransformMask, SplineError> {
+fn read_transform_mask(reader: &mut Reader<'_>) -> core::result::Result<TransformMask, Error> {
     Ok(TransformMask {
         quantization_types: reader.read_u8()?,
         position_types: reader.read_u8()?,
@@ -859,7 +776,7 @@ fn read_dynamic_vector_track(
     quantization: QuantizationType,
     default_value: f32,
     transform_types: [TransformType; 3],
-) -> core::result::Result<SplineTrackVector, SplineError> {
+) -> core::result::Result<SplineTrackVector, Error> {
     // `num_items` is one less than the number of control points.
     //
     // The actual number of control points is therefore:
@@ -887,7 +804,7 @@ fn read_dynamic_vector_track(
     let knot_count = num_items
         .checked_add(degree as usize)
         .and_then(|value| value.checked_add(2))
-        .ok_or(SplineError::InvalidControlPointCount)?;
+        .ok_or(Error::InvalidControlPointCount)?;
 
     // Knots are stored as bytes in this representation.
     //
@@ -971,7 +888,7 @@ fn read_dynamic_vector_track(
                 }
 
                 _ => {
-                    return Err(SplineError::InvalidQuantizationType(quantization as u8));
+                    return Err(Error::InvalidQuantizationType(quantization as u8));
                 }
             };
 
@@ -996,7 +913,7 @@ fn read_vector_track(
     quantization: QuantizationType,
     default_value: f32,
     transform_types: [TransformType; 3],
-) -> core::result::Result<SplineTrackVector, SplineError> {
+) -> core::result::Result<SplineTrackVector, Error> {
     // C++ `useSpline`
     let dynamic = transform_types
         .iter()
@@ -1039,7 +956,7 @@ fn read_vector_track(
 fn read_rotation_track(
     reader: &mut Reader<'_>,
     mask: TransformMask,
-) -> core::result::Result<SplineTrackQuat, SplineError> {
+) -> core::result::Result<SplineTrackQuat, Error> {
     match mask.sub_track_type(TransformType::Rotation) {
         SplineTrackType::Dynamic => {
             let num_items = reader.read_u16_le()? as usize;
@@ -1048,7 +965,7 @@ fn read_rotation_track(
             let knot_count = num_items
                 .checked_add(degree as usize)
                 .and_then(|value| value.checked_add(2))
-                .ok_or(SplineError::InvalidControlPointCount)?;
+                .ok_or(Error::InvalidControlPointCount)?;
 
             let knots = reader
                 .read_bytes(knot_count)?
@@ -1096,7 +1013,7 @@ fn read_rotation_track(
 fn read_transform_track(
     reader: &mut Reader<'_>,
     mask: TransformMask,
-) -> core::result::Result<TransformTrack, SplineError> {
+) -> core::result::Result<TransformTrack, Error> {
     let position = read_vector_track(
         reader,
         mask,
@@ -1168,11 +1085,11 @@ impl TransformSplineBlock {
         data: &[u8],
         num_tracks: usize,
         num_float_tracks: usize,
-    ) -> core::result::Result<Self, SplineError> {
+    ) -> core::result::Result<Self, Error> {
         // Every transform track begins with a four-byte mask.
         num_tracks
             .checked_mul(size_of::<TransformMask>())
-            .ok_or(SplineError::UnexpectedEof)?;
+            .ok_or(Error::UnexpectedEof)?;
 
         let mut reader = Reader::new(data);
 
@@ -1201,11 +1118,8 @@ impl TransformSplineBlock {
         &self,
         track_id: usize,
         time: f32,
-    ) -> core::result::Result<QsTransform, SplineError> {
-        let track = self
-            .tracks
-            .get(track_id)
-            .ok_or(SplineError::TrackOutOfRange)?;
+    ) -> core::result::Result<QsTransform, Error> {
+        let track = self.tracks.get(track_id).ok_or(Error::TrackOutOfRange)?;
 
         let transition = match &track.position {
             SplineTrackVector::Static(track) => track.value.clone(),
@@ -1252,7 +1166,7 @@ impl SplineDecompressor {
         block_offsets: &[u32],
         num_tracks: usize,
         num_float_tracks: usize,
-    ) -> core::result::Result<Self, SplineError> {
+    ) -> core::result::Result<Self, Error> {
         if block_offsets.is_empty() {
             return Ok(Self { blocks: Vec::new() });
         }
@@ -1262,7 +1176,7 @@ impl SplineDecompressor {
         for &offset in block_offsets {
             let offset = offset as usize;
 
-            let block_data = data.get(offset..).ok_or(SplineError::UnexpectedEof)?;
+            let block_data = data.get(offset..).ok_or(Error::UnexpectedEof)?;
 
             blocks.push(TransformSplineBlock::decode(
                 block_data,
@@ -1283,10 +1197,10 @@ impl SplineDecompressor {
         block_id: usize,
         track_id: usize,
         time: f32,
-    ) -> core::result::Result<QsTransform, SplineError> {
+    ) -> core::result::Result<QsTransform, Error> {
         self.blocks
             .get(block_id)
-            .ok_or(SplineError::TrackOutOfRange)?
+            .ok_or(Error::TrackOutOfRange)?
             .get_value(track_id, time)
     }
 }

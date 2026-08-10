@@ -1,6 +1,6 @@
 //! Apply FBX animation to Havok HKX animation.
 
-use serde_fbx::convert::{AnimationInput, convert_fbx};
+use serde_fbx::ser::{AnimationInput, fbx_to_hkx_bytes_vec};
 use serde_hkx_features::error::Error;
 use std::{
     fs,
@@ -13,10 +13,10 @@ pub const EXAMPLES: &str = color_print::cstr!(
     r#"Examples
 
 - <blue!>Apply fbx to hkx</blue!>
-  <cyan!>hkxc from-fbx -i</cyan!> ./defaultmale.hkx <cyan!>-a</cyan!> ./idle.fbx <cyan!>-o</cyan!> ./defaultmale_patched.hkx
+  <cyan!>hkxc from-fbx -s</cyan!> ./skeleton.hkx <cyan!>-a</cyan!> ./idle.fbx <cyan!>-o</cyan!> ./idle.hkx
 
 - <blue!>Convert multiple fbx animations</blue!>
-  <cyan!>hkxc from-fbx -i</cyan!> ./defaultmale.hkx <cyan!>-a</cyan!> ./idle.fbx ./walk.fbx <cyan!>-o</cyan!> ./out/
+  <cyan!>hkxc from-fbx -s</cyan!> ./skeleton.hkx <cyan!>-a</cyan!> ./idle.fbx ./walk.fbx <cyan!>-o</cyan!> ./out/
   "#
 );
 
@@ -24,8 +24,8 @@ pub const EXAMPLES: &str = color_print::cstr!(
 #[clap(arg_required_else_help = true, after_long_help = EXAMPLES)]
 pub(crate) struct Args {
     /// Input skeleton HKX file.
-    #[clap(short, long)]
-    pub input: PathBuf,
+    #[clap(short = 's', long, value_name = "SKELETON")]
+    pub skeleton: PathBuf,
 
     /// One or more FBX animation files to convert.
     #[clap(short = 'a', long, value_name = "FBX", num_args = 1..)]
@@ -72,7 +72,7 @@ pub async fn from_fbx(args: &Args) -> Result<(), AnyError> {
         .into());
     }
 
-    let skeleton_bytes = fs::read(&args.input)
+    let skeleton_bytes = fs::read(&args.skeleton)
         .map_err(|source| serde_hkx_features::error::Error::IoError { source })?;
 
     let mut animation_bytes = Vec::with_capacity(args.anim.len());
@@ -94,7 +94,7 @@ pub async fn from_fbx(args: &Args) -> Result<(), AnyError> {
         })
         .collect::<Vec<_>>();
 
-    let hkx_bytes = convert_fbx(&skeleton_bytes, &args.input, &animations, args.fps)?;
+    let hkx_bytes = fbx_to_hkx_bytes_vec(&skeleton_bytes, &args.skeleton, &animations, args.fps)?;
 
     let output = args.output.as_deref();
 

@@ -16,8 +16,9 @@ use core::{
     ops::{Add, BitAnd, BitOr, BitXor, Mul, Neg, Sub},
 };
 
-use super::SplineError;
 use havok_types::{Quaternion, Vector4};
+
+use crate::error::Error;
 
 #[cfg(target_arch = "x86_64")]
 type Float4 = __m128;
@@ -981,6 +982,9 @@ pub struct TransformMask {
 const _: () = assert!(core::mem::size_of::<TransformMask>() == 4);
 
 impl TransformMask {
+    /// `mask_and_quantization_size = hkaSplineCompressedAnimation.numberOfTransformTracks / MASK_SIZE`
+    pub const MASK_SIZE: i32 = core::mem::size_of::<Self>() as i32;
+
     /// Sets the position/scale quantization type (0 or 1; matches
     /// `position_quantization_type`'s decode).
     ///
@@ -1091,11 +1095,11 @@ impl TransformMask {
     /// # Errors
     /// neither 0, 1
     #[inline]
-    pub const fn position_quantization_type(self) -> Result<QuantizationType, SplineError> {
+    pub const fn position_quantization_type(self) -> Result<QuantizationType, Error> {
         match self.quantization_types & 0b11 {
             0 => Ok(QuantizationType::Bit8),
             1 => Ok(QuantizationType::Bit16),
-            value => Err(SplineError::InvalidQuantizationType(value)),
+            value => Err(Error::InvalidQuantizationType(value)),
         }
     }
 
@@ -1104,7 +1108,7 @@ impl TransformMask {
     /// # Errors
     /// out of range 2..=7
     #[inline]
-    pub const fn rotation_quantization_type(self) -> Result<QuantizationType, SplineError> {
+    pub const fn rotation_quantization_type(self) -> Result<QuantizationType, Error> {
         match ((self.quantization_types >> 2) & 0x0f) + 2 {
             2 => Ok(QuantizationType::Bit32),
             3 => Ok(QuantizationType::Bit40),
@@ -1112,7 +1116,7 @@ impl TransformMask {
             5 => Ok(QuantizationType::Bit24),
             6 => Ok(QuantizationType::Bit16Quat),
             7 => Ok(QuantizationType::Uncompressed),
-            value => Err(SplineError::InvalidQuantizationType(value)),
+            value => Err(Error::InvalidQuantizationType(value)),
         }
     }
 
@@ -1121,11 +1125,11 @@ impl TransformMask {
     /// # Errors
     /// neither 0, 1
     #[inline]
-    pub const fn scale_quantization_type(self) -> Result<QuantizationType, SplineError> {
+    pub const fn scale_quantization_type(self) -> Result<QuantizationType, Error> {
         match (self.quantization_types >> 6) & 0b11 {
             0 => Ok(QuantizationType::Bit8),
             1 => Ok(QuantizationType::Bit16),
-            value => Err(SplineError::InvalidQuantizationType(value)),
+            value => Err(Error::InvalidQuantizationType(value)),
         }
     }
 

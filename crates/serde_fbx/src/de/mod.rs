@@ -1,12 +1,11 @@
-pub(crate) mod decoder;
 pub(crate) mod fbx;
 
 use rayon::iter::Either;
 use rayon::prelude::*;
+use serde_spline::hkx::Skeleton;
 use std::path::Path;
 
-use self::decoder::decode_skeleton_from_bytes;
-use crate::{common::Skeleton, error::Error};
+use crate::error::Error;
 
 pub struct AnimationInput<'a> {
     pub bytes: &'a [u8],
@@ -28,28 +27,21 @@ pub fn export_fbx(
     animations: &[AnimationInput<'_>],
     fps: f32,
 ) -> Result<Vec<Vec<u8>>, Error> {
-    let skeleton = decode_skeleton_from_bytes(skeleton_bytes, skeleton_path)?;
+    let _fps = fps;
+
+    let skeleton = Skeleton::from_bytes(skeleton_bytes, skeleton_path)?;
 
     let (fbx_bytes_list, errors): (Vec<Vec<u8>>, Vec<Error>) =
-        animations
-            .par_iter()
-            .partition_map(|animation| match to_fbx(&skeleton, animation, fps) {
+        animations.par_iter().partition_map(|animation| {
+            match fbx::export_fbx(&skeleton, animation) {
                 Ok(fbx) => Either::Left(fbx),
                 Err(error) => Either::Right(error),
-            });
+            }
+        });
 
     if errors.is_empty() {
         return Ok(fbx_bytes_list);
     }
 
     Err(Error::Errors { errors })
-}
-
-fn to_fbx(
-    skeleton: &Skeleton,
-    animation: &AnimationInput<'_>,
-    _fps: f32,
-) -> Result<Vec<u8>, Error> {
-    let animation = self::decoder::decode(skeleton, animation)?;
-    fbx::export_fbx(skeleton, &animation)
 }

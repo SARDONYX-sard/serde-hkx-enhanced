@@ -6,7 +6,7 @@
 
 namespace niflib_animation {
 
-inline Niflib::NifInfo make_kf_info() {
+inline Niflib::NifInfo new_nif_info() {
   return Niflib::NifInfo{Niflib::VER_20_2_0_7, 11, 83};
 }
 

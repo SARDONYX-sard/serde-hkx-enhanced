@@ -53,7 +53,7 @@ read_kf(rust::Slice<const std::uint8_t> input) {
                             std::ios::in | std::ios::binary);
 
   std::list<Niflib::Ref<Niflib::NiObject>> missing_link_stack;
-  Niflib::NifInfo info = make_kf_info();
+  Niflib::NifInfo info = new_nif_info();
 
   return Niflib::ReadNifList(stream, missing_link_stack, &info);
 } // namespace

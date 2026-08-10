@@ -152,9 +152,7 @@ Niflib::NiControllerSequenceRef make_animation(const Skeleton &skeleton,
         new Niflib::NiTransformInterpolator();
 
     interpolator->SetTranslation(to_vector3(bone.reference_pose.translation));
-
     interpolator->SetRotation(to_quaternion(bone.reference_pose.rotation));
-
     interpolator->SetScale(bone.reference_pose.scale.x);
 
     interpolator->SetData(
@@ -197,14 +195,10 @@ std::vector<std::uint8_t> write_kf(Niflib::NiControllerSequence *sequence) {
   }
 
   std::ostringstream stream(std::ios::out | std::ios::binary);
-
-  Niflib::NifInfo info = make_kf_info();
-
-  Niflib::WriteNifTree(stream, sequence, info);
-
+  Niflib::WriteNifTree(stream, sequence, new_nif_info());
   const std::string bytes = stream.str();
 
-  return std::vector<std::uint8_t>(bytes.begin(), bytes.end());
+  return {bytes.begin(), bytes.end()};
 }
 
 } // namespace
@@ -214,22 +208,13 @@ rust::Vec<std::uint8_t> export_kf(const Kf &input) {
     throw std::runtime_error("cannot convert KF with an empty skeleton");
   }
 
-  /*
-   * The current niflib KF writer accepts one root object.
-   *
-   * For a single Animation this is directly the
-   * NiControllerSequence.
-   */
-  const Animation &animation = input.animation;
-
-  Niflib::NiControllerSequenceRef sequence =
-      make_animation(input.skeleton, animation);
-
+  // The current niflib KF writer accepts one root object.
+  auto sequence = make_animation(input.skeleton, input.animation);
   const std::vector<std::uint8_t> bytes = write_kf(sequence);
 
+  // to rust vec
   rust::Vec<std::uint8_t> result;
   result.reserve(bytes.size());
-
   for (std::uint8_t byte : bytes) {
     result.push_back(byte);
   }

@@ -1,9 +1,8 @@
 //! Convert Autodesk FBX animations into Havok HKX animations.
 
-pub mod common;
 mod error;
 
-pub mod convert;
-pub mod export;
+pub mod de;
+pub mod ser;
 
 pub use error::Error;

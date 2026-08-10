@@ -1,8 +1,8 @@
 use eframe::egui;
 
 use havok_types::{QsTransform, Quaternion, Vector4};
-use serde_spline::spline::{
-    de_spline_from_hkx_or_xml,
+use serde_spline::spline::alt::{
+    de::de_spline_from_hkx_or_xml,
     skeleton::{AnimationClip, Skeleton},
 };
 

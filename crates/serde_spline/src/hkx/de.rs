@@ -1,117 +1,69 @@
 use std::path::Path;
 
 use havok_classes::{Classes, hkaSplineCompressedAnimation};
+use rayon::prelude::*;
 use serde_hkx_features::ClassMap;
 use serde_hkx_features::convert::process_serde_with;
-use serde_spline::spline::SplineDecompressor;
 
+use super::{Animation, AnimationAnnotation, AnimationFrame, Bone, Skeleton};
 use crate::error::Error;
-use crate::export::AnimationInput;
-use crate::ffi::{
-    self, Animation, AnimationAnnotation, AnimationFrame, Bone, Quaternion, Skeleton, Transform,
-    Vec4,
-};
+use crate::spline::SplineDecompressor;
 
-/// Decodes HKX/XML skeleton and spline-compressed animations into the
-/// FFI-facing intermediate representation.
-///
-/// The returned [`Skeleton`] is shared by all decoded animations.
-///
-/// Spline-compressed animation data is decoded exclusively through
-/// [`SplineDecompressor`]. This module does not contain a second spline
-/// decoder.
-///
-/// # Errors
-///
-/// Returns [`Error::SerdeHkx`] when `serde_hkx_features` cannot deserialize
-/// the input HKX/XML data.
-///
-/// Returns [`Error::Spline`] when spline-compressed animation data cannot be
-/// decoded.
-///
-/// Returns [`Error::SplineAnimationNotFound`] when an animation does not
-/// contain an `hkaSplineCompressedAnimation` class.
-///
-/// Returns [`Error::MultipleSplineBlocks`] when an animation contains more
-/// than one spline block.
-///
-/// Returns [`Error::InvalidTrackCount`] when the declared transform-track
-/// count cannot be represented by the decoded spline data.
-///
-/// Returns [`Error::InvalidBoneIndex`] when an animation binding references
-/// a bone outside the skeleton.
-///
-/// Returns [`Error::InvalidSkeleton`] when the skeleton cannot be converted
-/// to the FFI representation.
-///
-/// Returns [`Error::InvalidAnimation`] when an animation cannot be converted
-/// to the FFI representation.
-///
-/// Returns [`Error::EmptySplineData`] when spline data is expected but no
-/// spline data is present.
-///
-/// Returns [`Error::InvalidSplineAnimation`] when the spline animation class
-/// contains an unsupported or otherwise invalid structure.
-pub fn decode(skeleton: &Skeleton, animation: &AnimationInput<'_>) -> Result<ffi::Kf, Error> {
-    let decoded_animation = process_serde_with(
-        animation.bytes,
-        animation.path,
-        |class_map| decode_animation(&class_map, skeleton),
-        |class_map| decode_animation(&class_map, skeleton),
-    )?;
-
-    Ok(ffi::Kf {
-        skeleton: skeleton.clone(),
-        animation: decoded_animation,
-    })
+impl Animation {
+    /// Extract animation information from `hkaSplineCompressedAnimation` using `bytes`
+    /// (such as .hkx or converted .xml file) and Skeleton information.
+    ///
+    /// - `path` is intended for error handling only and has no other purpose.
+    ///
+    /// # Errors
+    /// - Unexpected data
+    /// - Missing `hkaSplineCompressedAnimation`
+    #[inline]
+    pub fn from_bytes(skeleton: &Skeleton, bytes: &[u8], path: &Path) -> Result<Self, Error> {
+        process_serde_with(
+            bytes,
+            path,
+            |class_map| de_animation(&class_map, skeleton),
+            |class_map| de_animation(&class_map, skeleton),
+        )
+    }
 }
 
-pub(crate) fn decode_skeleton_from_bytes(
-    skeleton_bytes: &[u8],
-    skeleton_path: &Path,
-) -> Result<ffi::Skeleton, Error> {
-    process_serde_with(
-        skeleton_bytes,
-        skeleton_path,
-        decode_skeleton,
-        decode_skeleton,
-    )
+impl Skeleton {
+    /// Extract animation information from `hkaSkeleton` using `bytes`
+    /// (such as .hkx or converted .xml file)
+    ///
+    /// - `path` is intended for error handling only and has no other purpose.
+    ///
+    /// # Errors
+    /// Missing `hkaSkeleton`
+    #[inline]
+    pub fn from_bytes(skeleton_bytes: &[u8], skeleton_path: &Path) -> Result<Self, Error> {
+        process_serde_with(skeleton_bytes, skeleton_path, de_skeleton, de_skeleton)
+    }
 }
 
-/// Converts a `ClassMap` containing `hkaSkeleton` into the FFI skeleton.
-///
-/// This is intentionally separate from the skeleton type used elsewhere in
-/// the project. The output type belongs to the FFI boundary and contains
-/// only the data required by niflib.
-fn decode_skeleton(class_map: ClassMap<'_>) -> Result<Skeleton, Error> {
+fn de_skeleton(class_map: ClassMap<'_>) -> Result<Skeleton, Error> {
     let Some((_, Classes::hkaSkeleton(skeleton))) = class_map
         .into_iter()
         .find(|(_, class)| matches!(class, Classes::hkaSkeleton(_)))
     else {
-        return Err(Error::InvalidSkeleton {
-            message: "hkaSkeleton was not found".to_owned(),
-        });
+        return Err(Error::MissingSplineCompressedAnimation);
     };
 
     let bone_count = skeleton.m_bones.len();
 
     if skeleton.m_parentIndices.len() != bone_count {
-        return Err(Error::InvalidSkeleton {
-            message: format!(
-                "bone count and parent index count differ: bones={}, parents={}",
-                bone_count,
-                skeleton.m_parentIndices.len()
-            ),
+        return Err(Error::SkeletonBoneParentIndexCountMismatch {
+            bone_count,
+            parent_index_count: skeleton.m_parentIndices.len(),
         });
     }
 
     if skeleton.m_referencePose.len() != bone_count {
-        return Err(Error::InvalidSkeleton {
-            message: format!(
-                "bone count and reference pose count differ: bones={}, reference_pose={}",
-                bone_count,
-                skeleton.m_referencePose.len()
-            ),
+        return Err(Error::SkeletonReferencePoseCountMismatch {
+            bone_count,
+            reference_pose_count: skeleton.m_referencePose.len(),
         });
     }
 
@@ -122,18 +74,15 @@ fn decode_skeleton(class_map: ClassMap<'_>) -> Result<Skeleton, Error> {
         .map(|(index, bone)| {
             let parent_index = skeleton.m_parentIndices[index];
 
-            let reference_pose =
-                skeleton
-                    .m_referencePose
-                    .get(index)
-                    .ok_or_else(|| Error::InvalidSkeleton {
-                        message: format!("missing reference pose for bone {index}"),
-                    })?;
+            let reference_pose = skeleton
+                .m_referencePose
+                .get(index)
+                .ok_or_else(|| Error::MissingReferencePose { bone_index: index })?;
 
             Ok(Bone {
                 name: bone.m_name.to_string(),
                 parent_index,
-                reference_pose: convert_transform(reference_pose),
+                reference_pose: reference_pose.clone(),
             })
         })
         .collect::<Result<Vec<_>, Error>>()?;
@@ -146,12 +95,12 @@ fn decode_skeleton(class_map: ClassMap<'_>) -> Result<Skeleton, Error> {
 ///
 /// The spline bytes stored in `m_data` are passed directly to
 /// [`SplineDecompressor`]. No alternate spline parser is used here.
-fn decode_animation(class_map: &ClassMap<'_>, skeleton: &Skeleton) -> Result<Animation, Error> {
+fn de_animation(class_map: &ClassMap<'_>, skeleton: &Skeleton) -> Result<Animation, Error> {
     let Some((_, Classes::hkaSplineCompressedAnimation(spline))) = class_map
         .iter()
         .find(|(_, class)| matches!(class, Classes::hkaSplineCompressedAnimation(_)))
     else {
-        return Err(Error::SplineAnimationNotFound);
+        return Err(Error::MissingSplineCompressedAnimation);
     };
 
     let num_frames = spline.m_numFrames as usize;
@@ -172,12 +121,9 @@ fn decode_animation(class_map: &ClassMap<'_>, skeleton: &Skeleton) -> Result<Ani
 
     let block_offsets = spline.m_blockOffsets.as_slice();
     if block_offsets.len() != num_blocks as usize {
-        return Err(Error::InvalidSplineAnimation {
-            message: format!(
-                "block offset count does not match block count: offsets={}, blocks={}",
-                block_offsets.len(),
-                num_blocks
-            ),
+        return Err(Error::SplineBlockOffsetCountMismatch {
+            block_count: block_offsets.len(),
+            block_offset_count: num_blocks,
         });
     }
 
@@ -248,8 +194,7 @@ fn decode_frames(
             }
 
             let transform = decompressor.get_value(0, track_index, time)?;
-
-            transforms[bone_index] = convert_transform(&transform);
+            transforms[bone_index] = transform;
         }
 
         frames.push(AnimationFrame { transforms });
@@ -287,9 +232,9 @@ fn validate_track_mapping(
 ) -> Result<(), Error> {
     if track_to_bone.is_empty() {
         if num_tracks > bone_count {
-            return Err(Error::InvalidTrackCount {
-                expected: bone_count,
-                actual: num_tracks,
+            return Err(Error::InvalidTrackMapping {
+                track_count: num_tracks,
+                bone_count,
             });
         }
 
@@ -297,9 +242,9 @@ fn validate_track_mapping(
     }
 
     if track_to_bone.len() < num_tracks {
-        return Err(Error::InvalidTrackCount {
-            expected: num_tracks,
-            actual: track_to_bone.len(),
+        return Err(Error::InvalidTrackMapping {
+            track_count: num_tracks,
+            bone_count: track_to_bone.len(),
         });
     }
 
@@ -314,33 +259,6 @@ fn validate_track_mapping(
     }
 
     Ok(())
-}
-
-/// Converts Havok's transform type into the FFI transform type.
-const fn convert_transform(transform: &havok_types::QsTransform) -> Transform {
-    Transform {
-        translation: convert_vec4(&transform.transition),
-        rotation: convert_quaternion(&transform.quaternion),
-        scale: convert_vec4(&transform.scale),
-    }
-}
-
-const fn convert_vec4(value: &havok_types::Vector4) -> Vec4 {
-    Vec4 {
-        x: value.x,
-        y: value.y,
-        z: value.z,
-        w: value.w,
-    }
-}
-
-const fn convert_quaternion(value: &havok_types::Quaternion) -> Quaternion {
-    Quaternion {
-        x: value.x,
-        y: value.y,
-        z: value.z,
-        w: value.scaler,
-    }
 }
 
 /// Converts Havok annotation tracks into the FFI annotation representation.
@@ -361,7 +279,7 @@ fn decode_annotations(spline: &hkaSplineCompressedAnimation<'_>) -> Vec<Animatio
         }
     }
 
-    annotations.sort_by(|a, b| {
+    annotations.par_sort_by(|a, b| {
         a.time
             .partial_cmp(&b.time)
             .unwrap_or(std::cmp::Ordering::Equal)

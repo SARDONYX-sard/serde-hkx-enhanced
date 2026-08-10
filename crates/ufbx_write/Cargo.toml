@@ -1,0 +1,23 @@
+[package]
+name = "ufbx_write"
+version = "0.1.0"
+description = "FBX writer"
+
+authors = [""]
+categories = ["development-tools"]
+edition.workspace = true
+keywords = ["skyrim"]
+license = "MIT"
+readme = "../../README.md"
+repository.workspace = true
+rust-version.workspace = true
+
+[build-dependencies]
+bindgen = "0.72"
+cc = "1"
+
+[features]
+generate = []
+
+[lints]
+workspace = true

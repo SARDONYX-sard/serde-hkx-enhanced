@@ -869,11 +869,9 @@ fn read_dynamic_vector_track(
     // This convention is used by the binary format and is also why the
     // evaluation loop later uses `0..=num_items`.
     let num_items = reader.read_u16_le()? as usize;
-
-    // // The byte after numItems is reserved by the source format.
-    // // It occupies space in the binary but has no semantic value here.
-    // reader.skip(1)?;
-
+    // The byte after `numItems` is not a reserved byte.
+    // The C++ code reads `numItems` through `buffer++`, then advances `buffer` by one more byte.
+    // - test: https://godbolt.org/z/M47ez1dfY
     let degree = reader.read_u8()?;
 
     // For a B-spline, the knot vector must contain enough entries to describe
@@ -969,18 +967,6 @@ fn read_dynamic_vector_track(
 
                 QuantizationType::Bit16 => {
                     let value = reader.read_u16_le()? as f32;
-
-                    // The source implementation advances by six bytes for
-                    // each scalar:
-                    //
-                    //     2 bytes: quantized value
-                    //     2 bytes: padding
-                    //
-                    // The remaining layout is defined by the surrounding
-                    // component packing. This skip must therefore remain
-                    // synchronized with the reference implementation.
-                    // reader.skip(2)?;
-
                     value / 65535.0
                 }
 
@@ -1011,6 +997,7 @@ fn read_vector_track(
     default_value: f32,
     transform_types: [TransformType; 3],
 ) -> core::result::Result<SplineTrackVector, SplineError> {
+    // C++ `useSpline`
     let dynamic = transform_types
         .iter()
         .copied()
@@ -1056,10 +1043,6 @@ fn read_rotation_track(
     match mask.sub_track_type(TransformType::Rotation) {
         SplineTrackType::Dynamic => {
             let num_items = reader.read_u16_le()? as usize;
-
-            // Reserved byte.
-            // reader.skip(1)?;
-
             let degree = reader.read_u8()?;
 
             let knot_count = num_items
@@ -1199,10 +1182,7 @@ impl TransformSplineBlock {
             masks.push(read_transform_mask(&mut reader)?);
         }
 
-        // Float tracks are a separate region. This decoder currently does not
-        // expose them as transform tracks, but they still occupy bytes in the
-        // binary and must therefore be skipped before decoding transforms.
-        reader.skip(num_float_tracks)?;
+        reader.skip(num_float_tracks)?; // TODO: Support float_tracks
         reader.align(4)?; // The first transform track starts on a four-byte boundary.
 
         let mut tracks = Vec::with_capacity(num_tracks);

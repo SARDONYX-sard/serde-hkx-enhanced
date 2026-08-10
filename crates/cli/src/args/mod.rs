@@ -2,6 +2,8 @@ mod color;
 mod convert;
 mod diff;
 mod dump;
+#[cfg(feature = "fbx")]
+mod fbx;
 #[cfg(feature = "kf")]
 mod kf;
 mod progress_handler;
@@ -46,8 +48,17 @@ pub(crate) async fn run(args: Args) -> Result<(), AnyError> {
                 Ok(write_diff(args.old, args.new, args.output, args.color).await?)
             }
             SubCommands::Verify(args) => Ok(self::verify::verify(&args.path, args.color)?),
+
+            #[cfg(feature = "kf")]
             SubCommands::FromKf(args) => Ok(kf::from_kf::from_kf(&args).await?),
+            #[cfg(feature = "kf")]
             SubCommands::ToKf(args) => Ok(kf::to_kf::to_kf(&args)?),
+
+            #[cfg(feature = "fbx")]
+            SubCommands::FromFbx(args) => fbx::from_fbx::from_fbx(&args).await,
+            #[cfg(feature = "fbx")]
+            SubCommands::ToFbx(args) => Ok(fbx::to_fbx::to_fbx(&args)?),
+
             SubCommands::Completions { shell } => {
                 shell.generate(&mut Args::command(), &mut io::stdout());
                 Ok(())
@@ -119,6 +130,16 @@ pub(crate) enum SubCommands {
     /// Apply Gamebryo KF animation to Havok HKX behavior.
     #[clap(name = "to-kf")]
     ToKf(kf::to_kf::Args),
+
+    #[cfg(feature = "fbx")]
+    /// Convert Havok HKX animation to Gamebryo FBX animation.
+    #[clap(name = "from-fbx")]
+    FromFbx(fbx::from_fbx::Args),
+
+    #[cfg(feature = "fbx")]
+    /// Apply Gamebryo FBX animation to Havok HKX behavior.
+    #[clap(name = "to-fbx")]
+    ToFbx(fbx::to_fbx::Args),
 
     /// Generate shell completions
     #[clap(arg_required_else_help = true)]

@@ -2316,6 +2316,7 @@ dependencies = [
  "indicatif",
  "niflib_animation",
  "resvg",
+ "serde_fbx",
  "serde_hkx_features",
  "tiny-skia 0.12.0",
  "tokio",
@@ -4649,6 +4650,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde_fbx"
+version = "0.1.0"
+dependencies = [
+ "eframe",
+ "egui",
+ "havok_classes",
+ "havok_serde",
+ "havok_types",
+ "quick_tracing",
+ "rayon",
+ "serde",
+ "serde_hkx",
+ "serde_hkx_features",
+ "serde_spline",
+ "snafu",
+ "sonic-rs",
+ "tracing",
+ "ufbx",
+ "ufbx_write",
+]
+
+[[package]]
 name = "serde_hkx"
 version = "2.0.0"
 source = "git+https://github.com/SARDONYX-sard/serde-hkx.git?rev=aa950de#aa950dea5d515cde23814a436ab219ab9d258961"
@@ -4736,7 +4759,6 @@ dependencies = [
  "havok_classes",
  "havok_serde",
  "havok_types",
- "jwalk",
  "quick_tracing",
  "rayon",
  "serde",
@@ -5636,6 +5658,23 @@ dependencies = [
  "memoffset",
  "tempfile",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "ufbx"
+version = "0.11.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e160c3af14ab5a02f206e3af48777cb20e09bc22a354aa77d4e5cf4acb4a11a0"
+dependencies = [
+ "cc",
+]
+
+[[package]]
+name = "ufbx_write"
+version = "0.1.0"
+dependencies = [
+ "bindgen",
+ "cc",
 ]
 
 [[package]]

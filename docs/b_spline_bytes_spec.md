@@ -1,6 +1,17 @@
 # Havok Spline Compression Binary Specification
 
-This document specifies the binary layout decoded and encoded by `SplineDecompressor`.
+This document specifies the binary layout decoded by `SplineDecompressor`.
+
+The binary layout is defined in terms of:
+
+- exact field types and sizes;
+- byte offsets;
+- element stride;
+- section alignment;
+- padding;
+- byte order.
+
+Semantic decoding rules are described after the physical layout.
 
 Reference implementation:
 
@@ -9,110 +20,227 @@ Reference implementation:
 
 ---
 
-## 1. Block Layout
+# 1. Binary Layout Overview
 
-A compressed animation block is laid out as follows:
+A compressed spline animation block has the following physical layout:
 
 ```text
-byte offset
+block_start
     │
-    ├── 0x0000 ────────────────────────────────┐
-    │                                          │
-    │      TransformMask[0]                    │
-    │      TransformMask[1]                    │
-    │      ...                                 │
-    │      TransformMask[num_tracks - 1]       │
-    │                                          │
-    ├── align(4) ──────────────────────────────│
-    │                                          │
-    │      TransformTrack[0]                   │
-    │      TransformTrack[1]                   │
-    │      ...                                 │
-    │      TransformTrack[num_tracks - 1]      │
-    │                                          │
-    ├── align(4) ──────────────────────────────│
-    │                                          │
-    │      Float-track region                  │
-    │                                          │
-    └── align(16) ─────────────────────────────┘
+    ▼
+┌────────────────────────────────────────────────────────────────────┐
+│ TransformMask table                                                │
+│                                                                    │
+│ TransformMask[0]                                                   │
+│ TransformMask[1]                                                   │
+│ ...                                                                │
+│ TransformMask[num_tracks - 1]                                      │
+│                                                                    │
+│ element size : 4 bytes                                             │
+│ total size   : num_tracks × 4 bytes                                │
+│ alignment : none                                                   │
+└────────────────────────────────────────────────────────────────────┘
+    │
+    │ immediately followed by
+    ▼
+┌────────────────────────────────────────────────────────────────────┐
+│ Float-track region                                                 │
+│                                                                    │
+│ raw float-track data                                               │
+│                                                                    │
+│ size      : num_float_tracks bytes                                 │
+│ alignment    : 4 bytes                                             │
+└────────────────────────────────────────────────────────────────────┘
+    │
+    │ align_up(current_offset, 4)
+    │
+    │ 0..3 bytes padding
+    ▼
+┌────────────────────────────────────────────────────────────────────┐
+│ TransformTrack[0]                                                  │
+│                                                                    │
+│ Position                                                           │
+│ align(4)                                                           │
+│ Rotation                                                           │
+│ align(4)                                                           │
+│ Scale                                                              │
+│ align(4)                                                           │
+└────────────────────────────────────────────────────────────────────┘
+    │
+    ▼
+┌────────────────────────────────────────────────────────────────────┐
+│ TransformTrack[1]                                                  │
+│                                                                    │
+│ ...                                                                │
+└────────────────────────────────────────────────────────────────────┘
+    │
+    ▼
+                              ...
+    │
+    ▼
+┌────────────────────────────────────────────────────────────────────┐
+│ TransformTrack[num_tracks - 1]                                     │
+└────────────────────────────────────────────────────────────────────┘
 ```
 
-The mask table always precedes the transform-track data.
-
-Each `TransformMask` occupies exactly 4 bytes.
+The transform-track base offset is:
 
 ```text
-mask_offset(track) = track * 4
+mask_size  = num_tracks × 4
+float_size = num_float_tracks
+
+transform_base =
+    align_up(mask_size + float_size, 4)
 ```
 
-The transform-track region begins at:
-
-```text
-transform_base = align_up(num_tracks * 4, 4)
-```
-
-The actual size of each transform track is variable and is determined by
-its mask.
+There is **no 16-byte alignment between the float-track region and the
+transform-track region**.
 
 ---
 
-# 2. TransformMask
+# 2. Primitive Types
 
-Each transform track begins logically with one 4-byte mask entry.
+Unless otherwise specified, all integer and floating-point values are
+little-endian.
 
-```text
-byte +0
-  7            6 5             2 1              0
-  ┌─────────────┬───────────────┬───────────────┐
-  │    Scale    │    Rotation   │    Position   │
-  │     2 bits  │     4 bits    │     2 bits    │
-  └─────────────┴───────────────┴───────────────┘
+| Type   |     Size | Alignment | Description                       |
+| ------ | -------: | --------: | --------------------------------- |
+| `u8`   |   1 byte |         1 | unsigned 8-bit integer            |
+| `u16`  |  2 bytes |         2 | unsigned 16-bit integer           |
+| `u32`  |  4 bytes |         4 | unsigned 32-bit integer           |
+| `f32`  |  4 bytes |         4 | IEEE-754 single-precision float   |
+| `u40`  |  5 bytes |         1 | 40-bit packed integer             |
+| `u48`  |  6 bytes |         1 | 48-bit packed integer             |
+| `u128` | 16 bytes |        16 | 128-bit value / four `f32` values |
 
-byte +1
-  7 6 5 4 3 2 1 0
-  ┌────────────────┐
-  │ position_types │
-  └────────────────┘
+`u40` and `u48` are logical packed values. They are not native C/C++
+integer types.
 
-byte +2
-  7 6 5 4 3 2 1 0
-  ┌────────────────┐
-  │ rotation_types │
-  └────────────────┘
+Padding bytes are not semantic values.
 
-byte +3
-  7 6 5 4 3 2 1 0
-  ┌────────────────┐
-  │   scale_types  │
-  └────────────────┘
-```
+---
 
-The four bytes are:
+# 3. Alignment
+
+For an alignment `N`, where `N` is a power of two:
 
 ```text
-+0  quantization_types
-+1  position_types
-+2  rotation_types
-+3  scale_types
+align_up(offset, N) =
+    (offset + N - 1) & ~(N - 1)
 ```
 
-## `quantization_types`
+Padding size is:
 
 ```text
-bit 7    6 5   4   3   2 1    0
-    ┌─────┬─────────────┬─────┐
-    │Scale│  Rotation   │ Pos │
-    │  2  │      4      │  2  │
-    └─────┴─────────────┴─────┘
+padding =
+    align_up(offset, N) - offset
 ```
 
-| Bits | Field    | Encoding                |
-| ---- | -------- | ----------------------- |
-| 1:0  | Position | scalar quantization     |
-| 5:2  | Rotation | quaternion quantization |
-| 7:6  | Scale    | scalar quantization     |
+The relevant alignments are:
 
-Position:
+```text
+TransformMask              4 bytes
+Float-track region         no internal alignment
+TransformTrack start      4 bytes
+Position section           4 bytes
+Rotation section           format-dependent / 4-byte boundary
+Scale section              4 bytes
+```
+
+A padding region is explicitly represented as:
+
+```text
+┌──────────────────────────────┐
+│ padding: u8 × N              │
+└──────────────────────────────┘
+```
+
+Padding bytes have no semantic meaning.
+
+---
+
+# 4. TransformMask
+
+Each transform track has exactly one `TransformMask`.
+
+```text
+TransformMask
+size      = 4 bytes
+alignment = 4 bytes
+```
+
+Physical layout:
+
+```text
+offset +0
+┌────────────────────────────────────────────────────────────────────┐
+│ u8 quantization_types                                              │
+└────────────────────────────────────────────────────────────────────┘
+
+offset +1
+┌────────────────────────────────────────────────────────────────────┐
+│ u8 position_types                                                  │
+└────────────────────────────────────────────────────────────────────┘
+
+offset +2
+┌────────────────────────────────────────────────────────────────────┐
+│ u8 rotation_types                                                  │
+└────────────────────────────────────────────────────────────────────┘
+
+offset +3
+┌────────────────────────────────────────────────────────────────────┐
+│ u8 scale_types                                                     │
+└────────────────────────────────────────────────────────────────────┘
+```
+
+Therefore:
+
+```text
+sizeof(TransformMask) = 4
+```
+
+The mask table is:
+
+```text
+TransformMask[0]       // 4 bytes
+TransformMask[1]       // 4 bytes
+...
+TransformMask[N - 1]   // 4 bytes
+```
+
+and occupies:
+
+```text
+N × 4 bytes
+```
+
+---
+
+# 5. TransformMask Quantization Types
+
+`quantization_types` is one `u8`.
+
+```text
+u8 quantization_types
+```
+
+Bit layout:
+
+```text
+bit
+ 7 6 | 5 4 3 2 | 1 0
+─────┼─────────┼─────
+Scale   Rotation  Position
+  2        4         2
+```
+
+```text
+bits 0..1 = position quantization
+bits 2..5 = rotation quantization
+bits 6..7 = scale quantization
+```
+
+## Position and Scale
 
 ```text
 00 = Bit8
@@ -121,90 +249,391 @@ Position:
 11 = invalid
 ```
 
-Rotation:
+## Rotation
+
+The rotation value is encoded as:
 
 ```text
-bits 5:2 + 2
+rotation_type = (quantization_types >> 2) & 0x0f
+```
 
-2 = Bit32
-3 = Bit40
-4 = Bit48
+The supported encodings are:
+
+```text
+2 = Bit32 / Polar32
+3 = Bit40 / ThreeComp40
+4 = Bit48 / ThreeComp48
 5 = Bit24
 6 = Bit16Quat
 7 = Uncompressed
 ```
 
-Scale:
+---
+
+# 6. Transform Track
+
+A transform track contains:
 
 ```text
-00 = Bit8
-01 = Bit16
-10 = invalid
-11 = invalid
+TransformTrack
+    │
+    ├── Position
+    ├── align(4)
+    ├── Rotation
+    ├── align(4)
+    ├── Scale
+    └── align(4)
 ```
+
+The size is variable.
+
+```text
+sizeof(TransformTrack) = variable
+alignment               = 4
+```
+
+The size of each section is determined by its corresponding type flags.
 
 ---
 
-# 3. Transform Type Flags
+# 7. Position Types
 
-The three component flag bytes use the following bit layout.
-
-## 3.1 Position
+`position_types` is one `u8`.
 
 ```text
-bit:  7     6     5     4     3     2     1     0
-     ┌─────┬─────┬─────┬─────┬─────┬─────┬─────┬─────┐
-     │     │     │ SPL │ SPL │ SPL │ STA │ STA │ STA │
-     │     │     │  Z  │  Y  │  X  │  z  │  y  │  x  │
-     └─────┴─────┴─────┴─────┴─────┴─────┴─────┴─────┘
+u8 position_types
 ```
 
-More precisely:
+Bit layout:
+
+```text
+bit
+ 7  6  5  4 | 3 | 2  1  0
+────┬───────┼───┼────────
+    │       │   │
+    │       │   └─ STATIC_X/Y/Z
+    │       │
+    │       └──── reserved
+    │
+    └───────────── SPLINE_X/Y/Z
+```
+
+Precisely:
 
 ```text
 bit 0 = STATIC_X
 bit 1 = STATIC_Y
 bit 2 = STATIC_Z
 
+bit 3 = reserved
+
 bit 4 = SPLINE_X
 bit 5 = SPLINE_Y
 bit 6 = SPLINE_Z
 
-bits 3, 7 = reserved
+bit 7 = reserved
 ```
 
-A component is interpreted in this order:
+For each component:
 
 ```text
-STATIC -> SPLINE -> IDENTITY
+STATIC set
+    => static value
+
+STATIC clear + SPLINE set
+    => dynamic spline
+
+STATIC clear + SPLINE clear
+    => identity
+```
+
+Static takes precedence over spline.
+
+---
+
+# 8. Static Position
+
+A static position component is one `f32`.
+
+```text
+┌──────────────────────────────┐
+│ f32 component                │
+│ 4 bytes                      │
+└──────────────────────────────┘
+```
+
+The components are stored in X/Y/Z order.
+
+Example:
+
+```text
+STATIC_X | STATIC_Z
+
+offset +0    f32 X
+offset +4    f32 Z
+```
+
+Size:
+
+```text
+static_position_size =
+    static_axis_count × 4
+```
+
+Alignment:
+
+```text
+4 bytes
+```
+
+---
+
+# 9. Dynamic Position
+
+A dynamic position begins with:
+
+```text
+u16 num_items
+u8  degree
+u8  knot[0]
+...
+```
+
+The knot count is:
+
+```text
+knot_count =
+    num_items + degree + 2
+```
+
+Physical layout:
+
+```text
+offset +0
+┌──────────────────────────────┐
+│ u16 num_items                │
+│ 2 bytes                      │
+└──────────────────────────────┘
+
+offset +2
+┌──────────────────────────────┐
+│ u8 degree                    │
+│ 1 byte                       │
+└──────────────────────────────┘
+
+offset +3
+┌──────────────────────────────┐
+│ u8 knot[0]                   │
+│ 1 byte                       │
+├──────────────────────────────┤
+│ u8 knot[1]                   │
+│ 1 byte                       │
+├──────────────────────────────┤
+│ ...                          │
+├──────────────────────────────┤
+│ u8 knot[knot_count - 1]      │
+│ 1 byte                       │
+└──────────────────────────────┘
+```
+
+Header size:
+
+```text
+2 + 1 + knot_count
+```
+
+The section is then aligned to 4 bytes before its bounds.
+
+---
+
+# 10. Dynamic Position Bounds
+
+Each active spline axis has two `f32` values:
+
+```text
+f32 minimum
+f32 maximum
+```
+
+Each axis therefore consumes:
+
+```text
+8 bytes
+```
+
+Bounds are stored in X/Y/Z order, with inactive axes omitted.
+
+Example:
+
+```text
+SPLINE_X | SPLINE_Z
+
+┌──────────────────────────────┐
+│ f32 X.minimum                │ 4 bytes
+├──────────────────────────────┤
+│ f32 X.maximum                │ 4 bytes
+├──────────────────────────────┤
+│ f32 Z.minimum                │ 4 bytes
+├──────────────────────────────┤
+│ f32 Z.maximum                │ 4 bytes
+└──────────────────────────────┘
+
+size = 16 bytes
+alignment = 4
+```
+
+---
+
+# 11. Dynamic Position Control Points
+
+The number of control points is:
+
+```text
+control_point_count = num_items + 1
+```
+
+Only dynamic axes are stored.
+
+Axis order:
+
+```text
+X
+Y
+Z
+```
+
+Example:
+
+```text
+SPLINE_X | SPLINE_Z
+```
+
+Each control point contains:
+
+```text
+X
+Z
 ```
 
 Therefore:
 
 ```text
-static bit set
-    => Static
+point[0]
+point[1]
+...
+point[num_items]
+```
 
-static bit clear, spline bit set
-    => Dynamic
+The physical element stride depends on the scalar quantization format.
 
-both clear
-    => Identity
+---
+
+# 12. Scalar Quantization
+
+## 12.1 Bit8
+
+A Bit8 scalar is:
+
+```text
+u8 value
+```
+
+Element size:
+
+```text
+1 byte
+```
+
+The normalized value is:
+
+```text
+t = value / 255.0
+```
+
+The decoded value is:
+
+```text
+decoded =
+    minimum + (maximum - minimum) × t
 ```
 
 ---
 
-## 3.2 Rotation
+## 12.2 Bit16
 
-Rotation uses all four quaternion components.
+A Bit16 scalar has a **4-byte element stride**.
 
 ```text
-bit:  7     6     5     4     3     2     1     0
-     ┌─────┬─────┬─────┬─────┬─────┬─────┬─────┬─────┐
-     │ W   │ Z   │ Y   │ X   │ W   │ Z   │ Y   │ X   │
-     │ SPL │ SPL │ SPL │ SPL │ STA │ STA │ STA │ STA │
-     └─────┴─────┴─────┴─────┴─────┴─────┴─────┴─────┘
+┌──────────────────────────────┬──────────────────────────────┐
+│ u16 value                    │ u16 reserved                 │
+│ 2 bytes                      │ 2 bytes                      │
+└──────────────────────────────┴──────────────────────────────┘
+             4-byte element stride
 ```
+
+The first `u16` is the quantized value.
+
+The second `u16` is not a scalar value.
+
+Therefore:
+
+```text
+value size   = 2 bytes
+element size = 4 bytes
+alignment    = 2 bytes for the u16 value
+stride       = 4 bytes
+```
+
+The normalized value is:
+
+```text
+t = value / 65535.0
+```
+
+The decoded value is:
+
+```text
+decoded =
+    minimum + (maximum - minimum) × t
+```
+
+---
+
+# 13. Dynamic Scale
+
+Scale uses the same physical layout as Position.
+
+```text
+Scale
+    │
+    ├── static components
+    │
+    └── dynamic components
+         ├── spline header
+         ├── align(4)
+         ├── bounds
+         └── control points
+```
+
+The axis order is:
+
+```text
+X
+Y
+Z
+```
+
+---
+
+# 14. Rotation Types
+
+`rotation_types` is one `u8`.
+
+```text
+u8 rotation_types
+```
+
+Bit layout:
 
 ```text
 bit 0 = STATIC_X
@@ -218,673 +647,303 @@ bit 6 = SPLINE_Z
 bit 7 = SPLINE_W
 ```
 
-The rotation track is:
-
-```text
-rotation_types & 0xf0 != 0
-    => Dynamic
-
-rotation_types & 0x0f != 0
-    => Static
-
-otherwise
-    => Identity
-```
-
----
-
-## 3.3 Scale
-
-Scale uses the same layout as Position.
-
-```text
-bit:  7     6     5     4     3     2     1     0
-     ┌─────┬─────┬─────┬─────┬─────┬─────┬─────┬─────┐
-     │     │     │ SPL │ SPL │ SPL │     │     │     │
-     │     │     │  Z  │  Y  │  X  │     │     │     │
-     └─────┴─────┴─────┴─────┴─────┴─────┴─────┴─────┘
-```
-
-```text
-bit 0 = STATIC_X
-bit 1 = STATIC_Y
-bit 2 = STATIC_Z
-
-bit 4 = SPLINE_X
-bit 5 = SPLINE_Y
-bit 6 = SPLINE_Z
-
-bits 3, 7 = reserved
-```
-
----
-
-# 4. Transform Track
-
-A transform track consists of three sections in this exact order:
-
-```text
-TransformTrack
-    │
-    ├── Position
-    ├── align(4)
-    │
-    ├── Rotation
-    ├── align(4)
-    │
-    ├── Scale
-    └── align(4)
-```
-
-The decoder does not store fixed-size structures for these sections.
-
-Their size is determined entirely by the corresponding flags and
-quantization type.
-
----
-
-# 5. Static Vector Track
-
-A static position or scale component contains one `f32`.
-
-There is no per-component header.
-
-For a vector:
-
-```text
-Position/Scale
-    │
-    ├── if STATIC_X: f32
-    ├── if STATIC_Y: f32
-    └── if STATIC_Z: f32
-```
-
-The values are stored consecutively.
-
-Example:
-
-```text
-STATIC_X | STATIC_Z
-
-offset +0  : X f32
-offset +4  : Z f32
-```
-
-If no static component is present:
-
-```text
-size = 0
-```
-
-The section is followed by 4-byte alignment.
-
----
-
-# 6. Dynamic Vector Track
-
-A dynamic position or scale section begins with:
-
-```text
-offset +0  u16  num_items
-offset +2  u8   degree
-offset +3  u8   knot[0]
-offset +4  u8   knot[1]
-...
-```
-
-The number of knot bytes is:
-
-```text
-num_items + degree + 2
-```
-
-Thus the header and knot vector occupy:
-
-```text
-2 + 1 + (num_items + degree + 2)
-```
-
-bytes before alignment.
-
-The complete section is:
-
-```text
-┌──────────────────────────────────────────────┐
-│ u16 num_items                                │ +0
-├──────────────────────────────────────────────┤
-│ u8 degree                                    │ +2
-├──────────────────────────────────────────────┤
-│ u8 knot[0]                                   │ +3
-│ u8 knot[1]                                   │ +4
-│ ...                                          │
-│ u8 knot[num_items + degree + 1]             │
-├──────────────────────────────────────────────┤
-│ padding                                      │
-├──────────────────────────────────────────────┤
-│ bounds                                       │
-├──────────────────────────────────────────────┤
-│ quantized control points                     │
-└──────────────────────────────────────────────┘
-```
-
-The section is aligned to 4 bytes before the bounds.
-
----
-
-# 7. Dynamic Vector Bounds
-
-Only dynamic axes have bounds.
-
-For each dynamic axis, exactly two `f32` values are stored:
-
-```text
-f32 minimum
-f32 maximum
-```
-
-The order is the axis order:
+Rotation has four components:
 
 ```text
 X
 Y
 Z
+W
 ```
 
-but only axes whose corresponding spline flag is set are present.
-
-For example:
+The component interpretation is:
 
 ```text
-SPLINE_X | SPLINE_Z
+STATIC set
+    => static quaternion component
 
-+0   f32 X.minimum
-+4   f32 X.maximum
-+8   f32 Z.minimum
-+12  f32 Z.maximum
+STATIC clear + SPLINE set
+    => dynamic quaternion component
+
+STATIC clear + SPLINE clear
+    => identity/default component
 ```
-
-A non-dynamic axis contributes no bound bytes.
 
 ---
 
-# 8. Dynamic Vector Control Points
+# 15. Dynamic Quaternion
 
-There are:
+A dynamic quaternion uses the spline header:
+
+```text
+u16 num_items
+u8  degree
+u8  knot[knot_count]
+```
+
+where:
+
+```text
+knot_count =
+    num_items + degree + 2
+```
+
+The number of quaternion control points is:
 
 ```text
 num_items + 1
 ```
 
-control points.
+There are no scalar minimum/maximum bounds for quaternion components.
 
-Each control point contains only the active dynamic axes.
-
-The order is always:
-
-```text
-X
-Y
-Z
-```
-
-with inactive axes omitted.
-
-For example:
-
-```text
-SPLINE_X | SPLINE_Z
-```
-
-produces:
-
-```text
-point[0]:
-    X
-    Z
-
-point[1]:
-    X
-    Z
-
-...
-
-point[num_items]:
-    X
-    Z
-```
+Each control point is encoded using the selected quaternion quantization
+format.
 
 ---
 
-# 9. Scalar Quantization
+# 16. Quaternion Encoding Sizes
 
-## 9.1 Bit8
+| Encoding            | Physical size | Logical type |
+| ------------------- | ------------: | ------------ |
+| Bit32 / Polar32     |       4 bytes | `u32`        |
+| Bit40 / ThreeComp40 |       5 bytes | `u40`        |
+| Bit48 / ThreeComp48 |       6 bytes | `u48`        |
+| Bit24               |       3 bytes | `u24`        |
+| Bit16Quat           |       2 bytes | `u16`        |
+| Uncompressed        |      16 bytes | `u128`       |
 
-One control-point value occupies exactly one byte:
+The encoded quaternion is read according to the selected quantization
+format.
 
-```text
-u8 value
-```
-
-The decoded value is:
-
-```text
-t = value / 255.0
-
-decoded = min + (max - min) * t
-```
-
-Therefore:
-
-```text
-encoded range = 0 ..= 255
-```
+The byte alignment required before the encoded quaternion is determined by
+the decoder's format-specific packing rules.
 
 ---
 
-## 9.2 Bit16
-
-One control-point value occupies two bytes:
-
-```text
-offset +0  u16 value
-offset +2  padding
-```
-
-The integer is little-endian.
-
-The decoded value is:
-
-```text
-t = value / 65535.0
-
-decoded = min + (max - min) * t
-```
-
-The two-byte padding is part of the binary layout.
-
-Therefore one Bit16 scalar consumes:
-
-```text
-4 bytes
-```
-
-in the control-point stream.
-
----
-
-# 10. Dynamic Quaternion Track
-
-A dynamic quaternion section begins with the same spline header:
-
-```text
-offset +0  u16 num_items
-offset +2  u8  degree
-offset +3  u8  knot[0]
-...
-```
-
-The number of knots is:
-
-```text
-num_items + degree + 2
-```
-
-After the knot vector, the stream is aligned according to the quaternion
-quantization format.
-
-The section then contains:
-
-```text
-num_items + 1
-```
-
-quaternion control points.
-
-There are no scalar bounds for quaternion tracks.
-
----
-
-# 11. Static Quaternion Track
+# 17. Static Quaternion
 
 A static quaternion contains exactly one encoded quaternion.
-
-Before the quaternion value, the stream is aligned according to the
-rotation quantization format.
 
 ```text
 padding
 encoded quaternion
 ```
 
-The encoded quaternion size depends on the quantization type.
-
----
-
-# 12. Quaternion Quantization Sizes
-
-| Format              |     Size |
-| ------------------- | -------: |
-| Bit32 / Polar32     |  4 bytes |
-| Bit40 / ThreeComp40 |  5 bytes |
-| Bit48 / ThreeComp48 |  6 bytes |
-| Bit24               |  3 bytes |
-| Bit16Quat           |  2 bytes |
-| Uncompressed        | 16 bytes |
-
-The rotation stream must satisfy the alignment requirement of the selected
-encoding before the first quaternion value.
-
----
-
-# 13. ThreeComp40
-
-Each quaternion occupies 5 bytes.
-
-The logical 40-bit value is:
+The encoded quaternion size is:
 
 ```text
-bit  39                         0
-     ┌───┬────┬─────────────────┐
-     │ S │ Q  │   three values  │
-     └───┴────┴─────────────────┘
-       1   2          36
+Bit32         = 4 bytes
+Bit40         = 5 bytes
+Bit48         = 6 bytes
+Bit24         = 3 bytes
+Bit16Quat     = 2 bytes
+Uncompressed  = 16 bytes
 ```
 
-The three stored components occupy 12 bits each:
+For an uncompressed quaternion:
 
 ```text
-bits  0..11   component 0
-bits 12..23   component 1
-bits 24..35   component 2
-bits 36..37   omitted component index
-bit      38   omitted component sign
-bit      39   reserved
+┌──────────────────────────────┐
+│ f32 X                       │ 4 bytes
+├──────────────────────────────┤
+│ f32 Y                       │ 4 bytes
+├──────────────────────────────┤
+│ f32 Z                       │ 4 bytes
+├──────────────────────────────┤
+│ f32 W                       │ 4 bytes
+└──────────────────────────────┘
+
+size = 16 bytes
 ```
 
-The resulting 40-bit value is written little-endian as 5 bytes.
-
----
-
-# 14. ThreeComp48
-
-Each quaternion occupies 6 bytes.
-
-The three stored components occupy 15 bits each.
+Logical representation:
 
 ```text
-word 0:
-    bits 0..14   component 0
-    bit  15      omitted index bit 0
-
-word 1:
-    bits 0..14   component 1
-    bit  14      omitted index bit 1
-
-word 2:
-    bits 0..14   component 2
-    bit  15      omitted-component sign
+u128
 ```
 
-Each word is little-endian.
-
-The omitted quaternion component is reconstructed by the decoder.
-
----
-
-# 15. Polar32
-
-A Polar32 quaternion occupies exactly 4 bytes.
+Physical interpretation:
 
 ```text
-bit 31                         0
-     ┌──┬──┬──┬──┬──────────────┐
-     │W │Z │Y │X │  polar data  │
-     └──┴──┴──┴──┴──────────────┘
-      1  1  1  1       28
-```
-
-The low 18 bits contain the polar/angular value.
-
-The next 10 bits contain the radial value.
-
-The upper four bits contain component signs.
-
-```text
-bits  0..17   phi/theta data
-bits 18..27   radial data
-bit      28   sign X
-bit      29   sign Y
-bit      30   sign Z
-bit      31   sign W
-```
-
-The complete word is little-endian.
-
----
-
-# 16. Uncompressed Quaternion
-
-An uncompressed quaternion occupies 16 bytes.
-
-```text
-offset +0   f32 X
-offset +4   f32 Y
-offset +8   f32 Z
-offset +12  f32 W
-```
-
-All values are little-endian IEEE-754 `f32`.
-
----
-
-# 17. Alignment
-
-Alignment is performed by inserting zero bytes.
-
-For an alignment `N`:
-
-```text
-aligned_offset = (offset + N - 1) & !(N - 1)
-```
-
-The following alignments apply:
-
-```text
-TransformMask table       4 bytes
-Position section           4 bytes
-Rotation section           quantization-specific
-Scale section              4 bytes
-Float-track region        16 bytes
-```
-
-Padding bytes do not represent semantic data.
-
----
-
-# 18. Float Track Region
-
-The transform-track region is followed by the float-track region.
-
-The decoder skips:
-
-```text
-num_float_tracks
-```
-
-bytes at the beginning of this region.
-
-The float-track data itself is outside the transform spline structures
-described by this document.
-
----
-
-# 19. Block Offsets
-
-The animation contains a block-offset table.
-
-For block `i`:
-
-```text
-block_start = block_offsets[i]
-```
-
-The next block begins at:
-
-```text
-block_offsets[i + 1]
-```
-
-For the final block, the containing animation data determines its end.
-
-The offsets are byte offsets from the beginning of the compressed animation
-data.
-
----
-
-# 20. Example: One Dynamic Position Track
-
-Assume:
-
-```text
-num_items = 2
-degree    = 1
-
-position_types = SPLINE_X
-quantization   = Bit8
-```
-
-Then:
-
-```text
-number of control points
-    = num_items + 1
-    = 3
-
-number of knots
-    = num_items + degree + 2
-    = 5
-```
-
-The section is:
-
-```text
-offset
-+00  u16  num_items = 2
-+02  u8   degree    = 1
-+03  u8   knot[0]
-+04  u8   knot[1]
-+05  u8   knot[2]
-+06  u8   knot[3]
-+07  u8   knot[4]
-
-+08  f32  X.minimum
-+0C  f32  X.maximum
-
-+10  u8   control_point[0].X
-+11  u8   control_point[1].X
-+12  u8   control_point[2].X
-
-+13  padding
-```
-
-The section ends at the next 4-byte boundary.
-
----
-
-# 21. Example: Static Position XYZ
-
-Assume:
-
-```text
-STATIC_X | STATIC_Y | STATIC_Z
-```
-
-The section is exactly:
-
-```text
-offset
-+00  f32 X
-+04  f32 Y
-+08  f32 Z
-```
-
-Then:
-
-```text
-next_offset = align_up(offset + 12, 4)
-            = offset + 12
+[f32 X][f32 Y][f32 Z][f32 W]
 ```
 
 ---
 
-# 22. Example: Dynamic Position XZ with Bit16
+# 18. ThreeComp40
 
-Assume:
-
-```text
-SPLINE_X | SPLINE_Z
-quantization = Bit16
-num_items = 1
-degree = 1
-```
-
-There are two control points.
-
-The layout is:
+Physical size:
 
 ```text
-offset
-+00  u16 num_items
-+02  u8  degree
-
-+03  u8  knot[0]
-+04  u8  knot[1]
-+05  u8  knot[2]
-+06  u8  knot[3]
-
-+07  padding
+5 bytes
 ```
 
-After 4-byte alignment:
+Logical representation:
 
 ```text
-+08  f32 X.minimum
-+0C  f32 X.maximum
-+10  f32 Z.minimum
-+14  f32 Z.maximum
+u40
 ```
 
-Control points:
+The 40-bit value is stored little-endian:
 
 ```text
-+18  u16 X[0]
-+1A  padding
-
-+1C  u16 Z[0]
-+1E  padding
-
-+20  u16 X[1]
-+22  padding
-
-+24  u16 Z[1]
-+26  padding
+byte 0       byte 1       byte 2       byte 3       byte 4
+┌──────────┬──────────┬──────────┬──────────┬──────────┐
+│ bits 0-7 │ bits 8-15│bits16-23 │bits24-31 │bits32-39 │
+└──────────┴──────────┴──────────┴──────────┴──────────┘
 ```
 
-Finally:
-
-```text
-+28  end of section
-```
-
-The next transform component starts after the required 4-byte alignment.
+The exact component extraction is performed by the decoder.
 
 ---
 
-# 23. Identity Tracks
+# 19. ThreeComp48
 
-An identity component has no stored value.
+Physical size:
 
-For a vector component:
+```text
+6 bytes
+```
+
+Logical representation:
+
+```text
+u48
+```
+
+The value is stored as three little-endian `u16` words:
+
+```text
+word 0     word 1     word 2
+ 2 bytes    2 bytes    2 bytes
+```
+
+Total:
+
+```text
+3 × sizeof(u16)
+    = 6 bytes
+```
+
+The decoder extracts the three stored quaternion components and reconstructs
+the omitted component.
+
+---
+
+# 20. Polar32
+
+Physical size:
+
+```text
+4 bytes
+```
+
+Logical representation:
+
+```text
+u32
+```
+
+The complete value is read as one little-endian `u32`.
+
+The bit fields are interpreted by the Polar32 decoder.
+
+---
+
+# 21. Uncompressed Quaternion
+
+An uncompressed quaternion is four consecutive `f32` values:
+
+```text
+offset +0
+┌──────────────────────────────┐
+│ f32 X                        │
+└──────────────────────────────┘
+
+offset +4
+┌──────────────────────────────┐
+│ f32 Y                        │
+└──────────────────────────────┘
+
+offset +8
+┌──────────────────────────────┐
+│ f32 Z                        │
+└──────────────────────────────┘
+
+offset +12
+┌──────────────────────────────┐
+│ f32 W                        │
+└──────────────────────────────┘
+```
+
+Total:
+
+```text
+size      = 16 bytes
+alignment = 4 bytes
+```
+
+---
+
+# 22. TransformTrack Physical Layout
+
+For every transform track:
+
+```text
+TransformTrack
+│
+├── Position
+│
+├── padding to 4-byte boundary
+│
+├── Rotation
+│
+├── padding to 4-byte boundary
+│
+├── Scale
+│
+└── padding to 4-byte boundary
+```
+
+The complete track size is variable.
+
+A conceptual layout is:
+
+```text
+track_start
+    │
+    ▼
+┌──────────────────────────────┐
+│ Position                     │
+│ variable                     │
+└──────────────────────────────┘
+    │
+    │ align(4)
+    ▼
+┌──────────────────────────────┐
+│ Rotation                     │
+│ variable                     │
+└──────────────────────────────┘
+    │
+    │ align(4)
+    ▼
+┌──────────────────────────────┐
+│ Scale                        │
+│ variable                     │
+└──────────────────────────────┘
+    │
+    │ align(4)
+    ▼
+track_end
+```
+
+---
+
+# 23. Identity Components
+
+An identity component has no physical representation.
+
+For Position and Scale:
 
 ```text
 STATIC bit = 0
@@ -897,66 +956,177 @@ means:
 stored size = 0
 ```
 
-The decoder supplies the component's default value.
+For Rotation, an absent component does not consume quaternion storage.
 
-For rotation:
-
-```text
-rotation_types & 0xff == 0
-```
-
-means the rotation is an identity quaternion.
-
-No quaternion bytes are stored.
+The decoder supplies the default identity value.
 
 ---
 
-# 24. Decoder Invariants
+# 24. Complete Block Layout
 
-The decoder must validate all size-derived accesses before indexing.
+The complete physical layout can therefore be summarized as:
+
+```text
+┌────────────────────────────────────────────────────────────────────┐
+│ TransformMask[0]                       4 bytes                     │
+├────────────────────────────────────────────────────────────────────┤
+│ TransformMask[1]                       4 bytes                     │
+├────────────────────────────────────────────────────────────────────┤
+│ ...                                                                │
+├────────────────────────────────────────────────────────────────────┤
+│ TransformMask[num_tracks - 1]          4 bytes                     │
+├────────────────────────────────────────────────────────────────────┤
+│ Float-track region                     num_float_tracks bytes      │
+├────────────────────────────────────────────────────────────────────┤
+│ padding                                0..3 bytes                  │
+│                                         align(4)                   │
+├────────────────────────────────────────────────────────────────────┤
+│ TransformTrack[0]                      variable                    │
+├────────────────────────────────────────────────────────────────────┤
+│ TransformTrack[1]                      variable                    │
+├────────────────────────────────────────────────────────────────────┤
+│ ...                                                                │
+├────────────────────────────────────────────────────────────────────┤
+│ TransformTrack[num_tracks - 1]         variable                    │
+└────────────────────────────────────────────────────────────────────┘
+```
+
+The first transform track begins at:
+
+```text
+transform_base =
+    align_up(
+        num_tracks × sizeof(TransformMask)
+        + num_float_tracks,
+        4
+    )
+```
+
+Since:
+
+```text
+sizeof(TransformMask) = 4
+```
+
+this becomes:
+
+```text
+transform_base =
+    align_up(
+        num_tracks × 4
+        + num_float_tracks,
+        4
+    )
+```
+
+---
+
+# 25. Size and Stride Rules
+
+The following distinction is important.
+
+## Size
+
+The physical number of bytes occupied by a value.
+
+Example:
+
+```text
+Bit16 value size = 2 bytes
+```
+
+## Stride
+
+The distance from one element to the next.
+
+Example:
+
+```text
+Bit16 scalar:
+
+value size    = 2 bytes
+element stride = 4 bytes
+```
+
+Therefore:
+
+```text
+control_point[i + 1]
+    = control_point[i] + 4 bytes
+```
+
+for a Bit16 scalar.
+
+## Section size
+
+The complete physical size of a section, including required padding.
+
+For example:
+
+```text
+section_size =
+    data_size
+    + trailing_alignment_padding
+```
+
+This distinction must be preserved throughout the specification.
+
+---
+
+# 26. Decoder Safety Requirements
+
+All size calculations must be checked before converting them to `usize`
+or using them for indexing.
 
 In particular:
 
 ```text
 num_items + 1
 num_items + degree + 2
+num_tracks × sizeof(TransformMask)
 ```
 
-must not be allowed to overflow `usize`.
+must not overflow.
 
 All reads of:
 
 ```text
+TransformMask
+Float-track data
 knots
 bounds
 control points
 quaternion values
+padding
 ```
 
-must be bounded by the remaining input length.
+must remain within the input buffer.
 
-A malformed block must return `SplineDecompressError` rather than panic.
+Malformed input must return `SplineDecompressError`.
+
+The decoder must not panic because of malformed binary input.
 
 ---
 
-# 25. Encoder Semantics
+# 27. Encoder Semantics
 
 The encoder is not required to reproduce the original compressed byte
 stream.
 
-Encoding performs a valid representation of the decoded spline data under
-the selected quantization and spline representation.
+A valid encoder only needs to produce a representation that decodes to the
+represented animation within the precision allowed by the selected
+quantization format.
 
-Consequently:
+Therefore:
 
 ```text
 decode(encode(decoded))
 ```
 
-is expected to reproduce the represented animation within the precision
-allowed by the selected quantization format.
+should reproduce the represented animation within the expected quantization
+error.
 
-It is not expected that:
+The following is not required:
 
 ```text
 encode(decode(original)) == original

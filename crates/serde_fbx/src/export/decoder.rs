@@ -5,15 +5,13 @@ use serde_hkx_features::ClassMap;
 use serde_hkx_features::convert::process_serde_with;
 use serde_spline::spline::SplineDecompressor;
 
+use crate::common::{
+    Animation, AnimationAnnotation, AnimationFrame, Bone, Quaternion, Skeleton, Transform, Vec4,
+};
 use crate::error::Error;
 use crate::export::AnimationInput;
-use crate::ffi::{
-    self, Animation, AnimationAnnotation, AnimationFrame, Bone, Quaternion, Skeleton, Transform,
-    Vec4,
-};
 
-/// Decodes HKX/XML skeleton and spline-compressed animations into the
-/// FFI-facing intermediate representation.
+/// Decodes HKX/XML skeleton and spline-compressed animations into the intermediate representation.
 ///
 /// The returned [`Skeleton`] is shared by all decoded animations.
 ///
@@ -22,37 +20,8 @@ use crate::ffi::{
 /// decoder.
 ///
 /// # Errors
-///
-/// Returns [`Error::SerdeHkx`] when `serde_hkx_features` cannot deserialize
-/// the input HKX/XML data.
-///
-/// Returns [`Error::Spline`] when spline-compressed animation data cannot be
-/// decoded.
-///
-/// Returns [`Error::SplineAnimationNotFound`] when an animation does not
-/// contain an `hkaSplineCompressedAnimation` class.
-///
-/// Returns [`Error::MultipleSplineBlocks`] when an animation contains more
-/// than one spline block.
-///
-/// Returns [`Error::InvalidTrackCount`] when the declared transform-track
-/// count cannot be represented by the decoded spline data.
-///
-/// Returns [`Error::InvalidBoneIndex`] when an animation binding references
-/// a bone outside the skeleton.
-///
-/// Returns [`Error::InvalidSkeleton`] when the skeleton cannot be converted
-/// to the FFI representation.
-///
-/// Returns [`Error::InvalidAnimation`] when an animation cannot be converted
-/// to the FFI representation.
-///
-/// Returns [`Error::EmptySplineData`] when spline data is expected but no
-/// spline data is present.
-///
-/// Returns [`Error::InvalidSplineAnimation`] when the spline animation class
-/// contains an unsupported or otherwise invalid structure.
-pub fn decode(skeleton: &Skeleton, animation: &AnimationInput<'_>) -> Result<ffi::Kf, Error> {
+/// Unexpected data
+pub fn decode(skeleton: &Skeleton, animation: &AnimationInput<'_>) -> Result<Animation, Error> {
     let decoded_animation = process_serde_with(
         animation.bytes,
         animation.path,
@@ -60,16 +29,13 @@ pub fn decode(skeleton: &Skeleton, animation: &AnimationInput<'_>) -> Result<ffi
         |class_map| decode_animation(&class_map, skeleton),
     )?;
 
-    Ok(ffi::Kf {
-        skeleton: skeleton.clone(),
-        animation: decoded_animation,
-    })
+    Ok(decoded_animation)
 }
 
 pub(crate) fn decode_skeleton_from_bytes(
     skeleton_bytes: &[u8],
     skeleton_path: &Path,
-) -> Result<ffi::Skeleton, Error> {
+) -> Result<Skeleton, Error> {
     process_serde_with(
         skeleton_bytes,
         skeleton_path,

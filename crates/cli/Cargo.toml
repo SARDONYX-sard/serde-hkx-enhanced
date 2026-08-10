@@ -31,6 +31,7 @@ tracing-subscriber = "0.3.20"
 
 # workspace members
 niflib_animation = { path = "../niflib_animation", optional = true }
+serde_fbx = { path = "../serde_fbx", optional = true }
 
 [build-dependencies]
 ico = "0.5.0"
@@ -41,7 +42,7 @@ winres = "0.1.12"    # Meta information can be added to the exe.
 
 
 [features]
-default = ["color", "kf"]
+default = ["color", "fbx"]
 
 # ANSI color
 color = []
@@ -50,6 +51,7 @@ color = []
 extra_fmt = ["serde_hkx_features/extra_fmt"]
 
 kf = ["dep:niflib_animation"]
+fbx = ["dep:serde_fbx"]
 
 [lints]
 workspace = true

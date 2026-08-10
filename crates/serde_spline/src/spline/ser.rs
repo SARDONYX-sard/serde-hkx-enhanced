@@ -302,10 +302,6 @@ fn encode_dynamic_vector(
     let degree = track.degree;
 
     out.extend_from_slice(&num_items_u16.to_le_bytes());
-
-    // Reserved byte used by Havok's spline block format.
-    out.push(0);
-
     out.push(degree);
 
     let expected_knots = num_items
@@ -452,11 +448,7 @@ fn write_quantized_scalar(
 
         QuantizationType::Bit16 => {
             let encoded = (normalized * 65535.0).round() as u16;
-
             out.extend_from_slice(&encoded.to_le_bytes());
-
-            // The decoder skips two bytes after every 16-bit scalar.
-            out.extend_from_slice(&[0, 0]);
         }
 
         _ => {
@@ -541,12 +533,7 @@ fn encode_dynamic_rotation(
     }
 
     out.extend_from_slice(&num_items_u16.to_le_bytes());
-
-    // Reserved byte.
-    out.push(0);
-
     out.push(track.degree);
-
     encode_knots(&track.knots, out)?;
 
     align_rotation(out, quantization)?;
@@ -589,9 +576,7 @@ fn write_quaternion(
 
     match quantization {
         QuantizationType::Bit32 => write_quat_polar32(out, quaternion),
-
         QuantizationType::Bit40 => write_quat_three_comp40(out, quaternion),
-
         QuantizationType::Bit48 => write_quat_three_comp48(out, quaternion),
 
         QuantizationType::Uncompressed => {

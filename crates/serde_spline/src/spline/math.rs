@@ -618,6 +618,9 @@ pub struct TransformMask {
     pub rotation_types: u8,
     pub scale_types: u8,
 }
+// This guarantee is important because the Mask must be obtained in the exact same order and size as the actual binary layout,
+// and its size must match that of the binary.
+const _: () = assert!(core::mem::size_of::<TransformMask>() == 4);
 
 impl TransformMask {
     /// Sets the position/scale quantization type (0 or 1; matches
@@ -793,9 +796,7 @@ impl TransformMask {
             TransformType::PosX | TransformType::ScaleX => (0, 4),
             TransformType::PosY | TransformType::ScaleY => (1, 5),
             TransformType::PosZ | TransformType::ScaleZ => (2, 6),
-            TransformType::Rotation => {
-                return SplineTrackType::Identity;
-            }
+            TransformType::Rotation => return SplineTrackType::Identity,
         };
 
         if flags & (1 << static_bit) != 0 {

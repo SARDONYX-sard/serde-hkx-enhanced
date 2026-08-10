@@ -5,9 +5,9 @@ use serde_spline::spline::math::{
     TransformType,
 };
 
-use crate::convert::encoder::RawTransformTrack;
+use super::encoder::RawTransformTrack;
+use crate::common::{Animation, Skeleton};
 use crate::error::Error;
-use crate::ffi::{Animation, Skeleton};
 
 /// Builds fully-evaluable spline blocks directly from an FFI `Animation` and
 /// its `Skeleton`.

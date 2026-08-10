@@ -5,9 +5,13 @@
 // https://github.com/PredatorCZ/HavokLib/blob/master/source/hka_spline_decompressor.cpp
 
 //! SIMD and spline types used by the Havok spline decompressor.
+#![allow(clippy::missing_const_for_fn)]
 
+#[cfg(target_arch = "aarch64")]
+use core::arch::aarch64::*;
+#[cfg(target_arch = "x86_64")]
+use core::arch::x86_64::*;
 use core::{
-    arch::x86_64::*,
     fmt,
     ops::{Add, BitAnd, BitOr, BitXor, Mul, Neg, Sub},
 };
@@ -15,33 +19,70 @@ use core::{
 use super::SplineError;
 use havok_types::{Quaternion, Vector4};
 
+#[cfg(target_arch = "x86_64")]
+type Float4 = __m128;
+
+#[cfg(target_arch = "aarch64")]
+type Float4 = float32x4_t;
+
+#[cfg(target_arch = "x86_64")]
+type Int4 = __m128i;
+
+#[cfg(target_arch = "aarch64")]
+type Int4 = int32x4_t;
+
+#[cfg(target_arch = "x86_64")]
+type UInt4 = __m128i;
+
+#[cfg(target_arch = "aarch64")]
+type UInt4 = uint32x4_t;
+
 /// A 16-byte-aligned four-lane floating-point SIMD value.
 #[repr(C, align(16))]
 #[derive(Clone, Copy)]
-pub struct Vec4A16(__m128);
+pub struct Vec4A16(Float4);
 
 impl Vec4A16 {
     /// Creates a four-lane SIMD value.
     #[inline]
     pub fn new(x: f32, y: f32, z: f32, w: f32) -> Self {
-        unsafe { Self(_mm_set_ps(w, z, y, x)) }
+        #[cfg(target_arch = "x86_64")]
+        {
+            unsafe { Self(_mm_set_ps(w, z, y, x)) }
+        }
+
+        #[cfg(target_arch = "aarch64")]
+        {
+            unsafe {
+                let value = [x, y, z, w];
+                Self(vld1q_f32(value.as_ptr()))
+            }
+        }
     }
 
     /// Creates a SIMD value with all lanes set to the same value.
     #[inline]
     pub fn splat(value: f32) -> Self {
-        unsafe { Self(_mm_set1_ps(value)) }
+        #[cfg(target_arch = "x86_64")]
+        {
+            unsafe { Self(_mm_set1_ps(value)) }
+        }
+
+        #[cfg(target_arch = "aarch64")]
+        {
+            unsafe { Self(vdupq_n_f32(value)) }
+        }
     }
 
     /// Creates a value from a raw SIMD register.
     #[inline]
-    pub const fn from_raw(value: __m128) -> Self {
+    pub const fn from_raw(value: Float4) -> Self {
         Self(value)
     }
 
     /// Returns the raw SIMD register.
     #[inline]
-    pub const fn raw(self) -> __m128 {
+    pub const fn raw(self) -> Float4 {
         self.0
     }
 
@@ -50,7 +91,13 @@ impl Vec4A16 {
     pub fn to_array(self) -> [f32; 4] {
         unsafe {
             let mut value = [0.0; 4];
+
+            #[cfg(target_arch = "x86_64")]
             _mm_storeu_ps(value.as_mut_ptr(), self.0);
+
+            #[cfg(target_arch = "aarch64")]
+            vst1q_f32(value.as_mut_ptr(), self.0);
+
             value
         }
     }
@@ -66,49 +113,107 @@ impl Vec4A16 {
     /// Reinterprets the bits as signed integer lanes.
     #[inline]
     pub fn cast_i32(self) -> IVec4A16 {
-        unsafe { IVec4A16(_mm_castps_si128(self.0)) }
+        #[cfg(target_arch = "x86_64")]
+        {
+            unsafe { IVec4A16(_mm_castps_si128(self.0)) }
+        }
+
+        #[cfg(target_arch = "aarch64")]
+        {
+            unsafe { IVec4A16(vreinterpretq_s32_f32(self.0)) }
+        }
     }
 
     /// Reinterprets the bits as unsigned integer lanes.
     #[inline]
     pub fn cast_u32(self) -> UVec4A16 {
-        unsafe { UVec4A16(_mm_castps_si128(self.0)) }
+        #[cfg(target_arch = "x86_64")]
+        {
+            unsafe { UVec4A16(_mm_castps_si128(self.0)) }
+        }
+
+        #[cfg(target_arch = "aarch64")]
+        {
+            unsafe { UVec4A16(vreinterpretq_u32_f32(self.0)) }
+        }
     }
 
     /// Returns the absolute value of every lane.
     #[inline]
     pub fn abs(self) -> Self {
-        unsafe {
-            Self(_mm_and_ps(
-                self.0,
-                _mm_castsi128_ps(_mm_set1_epi32(0x7fff_ffff)),
-            ))
+        #[cfg(target_arch = "x86_64")]
+        {
+            unsafe {
+                Self(_mm_and_ps(
+                    self.0,
+                    _mm_castsi128_ps(_mm_set1_epi32(0x7fff_ffff)),
+                ))
+            }
+        }
+
+        #[cfg(target_arch = "aarch64")]
+        {
+            unsafe { Self(vabsq_f32(self.0)) }
         }
     }
 
     /// Returns the square root of every lane.
     #[inline]
     pub fn sqrt(self) -> Self {
-        unsafe { Self(_mm_sqrt_ps(self.0)) }
+        #[cfg(target_arch = "x86_64")]
+        {
+            unsafe { Self(_mm_sqrt_ps(self.0)) }
+        }
+
+        #[cfg(target_arch = "aarch64")]
+        {
+            unsafe { Self(vsqrtq_f32(self.0)) }
+        }
     }
 
     /// Selects `rhs` where the mask is set and `self` otherwise.
     #[inline]
     pub fn select(self, rhs: Self, mask: IVec4A16) -> Self {
-        unsafe {
-            let mask = _mm_castsi128_ps(mask.0);
+        #[cfg(target_arch = "x86_64")]
+        {
+            unsafe {
+                let mask = _mm_castsi128_ps(mask.0);
 
-            Self(_mm_or_ps(
-                _mm_andnot_ps(mask, self.0),
-                _mm_and_ps(mask, rhs.0),
-            ))
+                Self(_mm_or_ps(
+                    _mm_andnot_ps(mask, self.0),
+                    _mm_and_ps(mask, rhs.0),
+                ))
+            }
+        }
+
+        #[cfg(target_arch = "aarch64")]
+        {
+            unsafe { Self(vbslq_f32(vreinterpretq_u32_s32(mask.0), rhs.0, self.0)) }
         }
     }
 
-    /// Shuffles lanes using an SSE shuffle mask.
+    /// Shuffles lanes using an SSE-compatible shuffle mask.
+    ///
+    /// On AArch64 this is implemented through scalar lane extraction because
+    /// NEON does not provide a direct equivalent of `_mm_shuffle_ps`.
     #[inline]
     pub fn shuffle<const MASK: i32>(self) -> Self {
-        unsafe { Self(_mm_shuffle_ps(self.0, self.0, MASK)) }
+        #[cfg(target_arch = "x86_64")]
+        {
+            unsafe { Self(_mm_shuffle_ps(self.0, self.0, MASK)) }
+        }
+
+        #[cfg(target_arch = "aarch64")]
+        {
+            let lanes = self.to_array();
+
+            let x = lanes[(MASK & 0x03) as usize];
+            let y = lanes[((MASK >> 2) & 0x03) as usize];
+            let z = lanes[((MASK >> 4) & 0x03) as usize];
+            let w = lanes[((MASK >> 6) & 0x03) as usize];
+
+            Self::new(x, y, z, w)
+        }
     }
 }
 
@@ -137,7 +242,15 @@ impl Add for Vec4A16 {
 
     #[inline]
     fn add(self, rhs: Self) -> Self {
-        unsafe { Self(_mm_add_ps(self.0, rhs.0)) }
+        #[cfg(target_arch = "x86_64")]
+        {
+            unsafe { Self(_mm_add_ps(self.0, rhs.0)) }
+        }
+
+        #[cfg(target_arch = "aarch64")]
+        {
+            unsafe { Self(vaddq_f32(self.0, rhs.0)) }
+        }
     }
 }
 
@@ -146,7 +259,15 @@ impl Sub for Vec4A16 {
 
     #[inline]
     fn sub(self, rhs: Self) -> Self {
-        unsafe { Self(_mm_sub_ps(self.0, rhs.0)) }
+        #[cfg(target_arch = "x86_64")]
+        {
+            unsafe { Self(_mm_sub_ps(self.0, rhs.0)) }
+        }
+
+        #[cfg(target_arch = "aarch64")]
+        {
+            unsafe { Self(vsubq_f32(self.0, rhs.0)) }
+        }
     }
 }
 
@@ -155,7 +276,15 @@ impl Mul for Vec4A16 {
 
     #[inline]
     fn mul(self, rhs: Self) -> Self {
-        unsafe { Self(_mm_mul_ps(self.0, rhs.0)) }
+        #[cfg(target_arch = "x86_64")]
+        {
+            unsafe { Self(_mm_mul_ps(self.0, rhs.0)) }
+        }
+
+        #[cfg(target_arch = "aarch64")]
+        {
+            unsafe { Self(vmulq_f32(self.0, rhs.0)) }
+        }
     }
 }
 
@@ -164,37 +293,64 @@ impl Neg for Vec4A16 {
 
     #[inline]
     fn neg(self) -> Self {
-        unsafe { Self(_mm_xor_ps(self.0, _mm_set1_ps(-0.0))) }
+        #[cfg(target_arch = "x86_64")]
+        {
+            unsafe { Self(_mm_xor_ps(self.0, _mm_set1_ps(-0.0))) }
+        }
+
+        #[cfg(target_arch = "aarch64")]
+        {
+            unsafe { Self(vnegq_f32(self.0)) }
+        }
     }
 }
 
 /// A 16-byte-aligned four-lane signed integer SIMD value.
 #[repr(C, align(16))]
 #[derive(Clone, Copy)]
-pub struct IVec4A16(__m128i);
+pub struct IVec4A16(Int4);
 
 impl IVec4A16 {
     /// Creates a four-lane signed integer SIMD value.
     #[inline]
     pub fn new(x: i32, y: i32, z: i32, w: i32) -> Self {
-        unsafe { Self(_mm_set_epi32(w, z, y, x)) }
+        #[cfg(target_arch = "x86_64")]
+        {
+            unsafe { Self(_mm_set_epi32(w, z, y, x)) }
+        }
+
+        #[cfg(target_arch = "aarch64")]
+        {
+            unsafe {
+                let value = [x, y, z, w];
+                Self(vld1q_s32(value.as_ptr()))
+            }
+        }
     }
 
     /// Creates a SIMD value with all lanes set to the same value.
     #[inline]
     pub fn splat(value: i32) -> Self {
-        unsafe { Self(_mm_set1_epi32(value)) }
+        #[cfg(target_arch = "x86_64")]
+        {
+            unsafe { Self(_mm_set1_epi32(value)) }
+        }
+
+        #[cfg(target_arch = "aarch64")]
+        {
+            unsafe { Self(vdupq_n_s32(value)) }
+        }
     }
 
     /// Creates a value from a raw SIMD register.
     #[inline]
-    pub const fn from_raw(value: __m128i) -> Self {
+    pub const fn from_raw(value: Int4) -> Self {
         Self(value)
     }
 
     /// Returns the raw SIMD register.
     #[inline]
-    pub const fn raw(self) -> __m128i {
+    pub const fn raw(self) -> Int4 {
         self.0
     }
 
@@ -203,7 +359,13 @@ impl IVec4A16 {
     pub fn to_array(self) -> [i32; 4] {
         unsafe {
             let mut value = [0; 4];
+
+            #[cfg(target_arch = "x86_64")]
             _mm_storeu_si128(value.as_mut_ptr().cast(), self.0);
+
+            #[cfg(target_arch = "aarch64")]
+            vst1q_s32(value.as_mut_ptr(), self.0);
+
             value
         }
     }
@@ -211,37 +373,77 @@ impl IVec4A16 {
     /// Converts signed integer lanes to floating-point lanes.
     #[inline]
     pub fn to_f32(self) -> Vec4A16 {
-        unsafe { Vec4A16(_mm_cvtepi32_ps(self.0)) }
+        #[cfg(target_arch = "x86_64")]
+        {
+            unsafe { Vec4A16(_mm_cvtepi32_ps(self.0)) }
+        }
+
+        #[cfg(target_arch = "aarch64")]
+        {
+            unsafe { Vec4A16(vcvtq_f32_s32(self.0)) }
+        }
     }
 
     /// Reinterprets the bits as floating-point lanes.
     #[inline]
     pub fn cast_f32(self) -> Vec4A16 {
-        unsafe { Vec4A16(_mm_castsi128_ps(self.0)) }
+        #[cfg(target_arch = "x86_64")]
+        {
+            unsafe { Vec4A16(_mm_castsi128_ps(self.0)) }
+        }
+
+        #[cfg(target_arch = "aarch64")]
+        {
+            unsafe { Vec4A16(vreinterpretq_f32_s32(self.0)) }
+        }
     }
 
     /// Compares all lanes for equality.
     #[inline]
     pub fn cmp_eq(self, rhs: Self) -> Self {
-        unsafe { Self(_mm_cmpeq_epi32(self.0, rhs.0)) }
+        #[cfg(target_arch = "x86_64")]
+        {
+            unsafe { Self(_mm_cmpeq_epi32(self.0, rhs.0)) }
+        }
+
+        #[cfg(target_arch = "aarch64")]
+        {
+            unsafe { Self(vreinterpretq_s32_u32(vceqq_s32(self.0, rhs.0))) }
+        }
     }
 
     /// Returns one signed integer lane.
     #[inline]
     pub fn lane<const INDEX: i32>(self) -> i32 {
-        unsafe { _mm_extract_epi32(self.0, INDEX) }
+        self.to_array()[INDEX as usize]
     }
 
     /// Performs a logical right shift on every 32-bit lane.
     #[inline]
     pub fn shr<const N: i32>(self) -> Self {
-        unsafe { Self(_mm_srli_epi32(self.0, N)) }
+        #[cfg(target_arch = "x86_64")]
+        {
+            unsafe { Self(_mm_srli_epi32(self.0, N)) }
+        }
+
+        #[cfg(target_arch = "aarch64")]
+        {
+            unsafe { Self(vshrq_n_s32(self.0, N)) }
+        }
     }
 
     /// Performs an arithmetic right shift on every 32-bit lane.
     #[inline]
     pub fn sar<const N: i32>(self) -> Self {
-        unsafe { Self(_mm_srai_epi32(self.0, N)) }
+        #[cfg(target_arch = "x86_64")]
+        {
+            unsafe { Self(_mm_srai_epi32(self.0, N)) }
+        }
+
+        #[cfg(target_arch = "aarch64")]
+        {
+            unsafe { Self(vshrq_n_s32(self.0, N)) }
+        }
     }
 }
 
@@ -254,7 +456,15 @@ impl fmt::Debug for IVec4A16 {
 impl From<UVec4A16> for IVec4A16 {
     #[inline]
     fn from(value: UVec4A16) -> Self {
-        Self(value.0)
+        #[cfg(target_arch = "x86_64")]
+        {
+            Self(value.0)
+        }
+
+        #[cfg(target_arch = "aarch64")]
+        {
+            unsafe { Self(vreinterpretq_s32_u32(value.0)) }
+        }
     }
 }
 
@@ -270,7 +480,15 @@ impl Add for IVec4A16 {
 
     #[inline]
     fn add(self, rhs: Self) -> Self {
-        unsafe { Self(_mm_add_epi32(self.0, rhs.0)) }
+        #[cfg(target_arch = "x86_64")]
+        {
+            unsafe { Self(_mm_add_epi32(self.0, rhs.0)) }
+        }
+
+        #[cfg(target_arch = "aarch64")]
+        {
+            unsafe { Self(vaddq_s32(self.0, rhs.0)) }
+        }
     }
 }
 
@@ -279,7 +497,15 @@ impl Sub for IVec4A16 {
 
     #[inline]
     fn sub(self, rhs: Self) -> Self {
-        unsafe { Self(_mm_sub_epi32(self.0, rhs.0)) }
+        #[cfg(target_arch = "x86_64")]
+        {
+            unsafe { Self(_mm_sub_epi32(self.0, rhs.0)) }
+        }
+
+        #[cfg(target_arch = "aarch64")]
+        {
+            unsafe { Self(vsubq_s32(self.0, rhs.0)) }
+        }
     }
 }
 
@@ -288,7 +514,15 @@ impl BitAnd for IVec4A16 {
 
     #[inline]
     fn bitand(self, rhs: Self) -> Self {
-        unsafe { Self(_mm_and_si128(self.0, rhs.0)) }
+        #[cfg(target_arch = "x86_64")]
+        {
+            unsafe { Self(_mm_and_si128(self.0, rhs.0)) }
+        }
+
+        #[cfg(target_arch = "aarch64")]
+        {
+            unsafe { Self(vandq_s32(self.0, rhs.0)) }
+        }
     }
 }
 
@@ -297,7 +531,15 @@ impl BitOr for IVec4A16 {
 
     #[inline]
     fn bitor(self, rhs: Self) -> Self {
-        unsafe { Self(_mm_or_si128(self.0, rhs.0)) }
+        #[cfg(target_arch = "x86_64")]
+        {
+            unsafe { Self(_mm_or_si128(self.0, rhs.0)) }
+        }
+
+        #[cfg(target_arch = "aarch64")]
+        {
+            unsafe { Self(vorrq_s32(self.0, rhs.0)) }
+        }
     }
 }
 
@@ -306,37 +548,64 @@ impl BitXor for IVec4A16 {
 
     #[inline]
     fn bitxor(self, rhs: Self) -> Self {
-        unsafe { Self(_mm_xor_si128(self.0, rhs.0)) }
+        #[cfg(target_arch = "x86_64")]
+        {
+            unsafe { Self(_mm_xor_si128(self.0, rhs.0)) }
+        }
+
+        #[cfg(target_arch = "aarch64")]
+        {
+            unsafe { Self(veorq_s32(self.0, rhs.0)) }
+        }
     }
 }
 
 /// A 16-byte-aligned four-lane unsigned integer SIMD value.
 #[repr(C, align(16))]
 #[derive(Clone, Copy)]
-pub struct UVec4A16(__m128i);
+pub struct UVec4A16(UInt4);
 
 impl UVec4A16 {
     /// Creates a four-lane unsigned integer SIMD value.
     #[inline]
     pub fn new(x: u32, y: u32, z: u32, w: u32) -> Self {
-        unsafe { Self(_mm_set_epi32(w as i32, z as i32, y as i32, x as i32)) }
+        #[cfg(target_arch = "x86_64")]
+        {
+            unsafe { Self(_mm_set_epi32(w as i32, z as i32, y as i32, x as i32)) }
+        }
+
+        #[cfg(target_arch = "aarch64")]
+        {
+            unsafe {
+                let value = [x, y, z, w];
+                Self(vld1q_u32(value.as_ptr()))
+            }
+        }
     }
 
     /// Creates a SIMD value with all lanes set to the same value.
     #[inline]
     pub fn splat(value: u32) -> Self {
-        unsafe { Self(_mm_set1_epi32(value as i32)) }
+        #[cfg(target_arch = "x86_64")]
+        {
+            unsafe { Self(_mm_set1_epi32(value as i32)) }
+        }
+
+        #[cfg(target_arch = "aarch64")]
+        {
+            unsafe { Self(vdupq_n_u32(value)) }
+        }
     }
 
     /// Creates a value from a raw SIMD register.
     #[inline]
-    pub const fn from_raw(value: __m128i) -> Self {
+    pub const fn from_raw(value: UInt4) -> Self {
         Self(value)
     }
 
     /// Returns the raw SIMD register.
     #[inline]
-    pub const fn raw(self) -> __m128i {
+    pub const fn raw(self) -> UInt4 {
         self.0
     }
 
@@ -345,39 +614,85 @@ impl UVec4A16 {
     pub fn to_array(self) -> [u32; 4] {
         unsafe {
             let mut value = [0u32; 4];
+
+            #[cfg(target_arch = "x86_64")]
             _mm_storeu_si128(value.as_mut_ptr().cast(), self.0);
+
+            #[cfg(target_arch = "aarch64")]
+            vst1q_u32(value.as_mut_ptr(), self.0);
+
             value
         }
     }
 
     /// Reinterprets the bits as signed integer lanes.
     #[inline]
-    pub const fn cast_i32(self) -> IVec4A16 {
-        IVec4A16(self.0)
+    pub fn cast_i32(self) -> IVec4A16 {
+        #[cfg(target_arch = "x86_64")]
+        {
+            IVec4A16(self.0)
+        }
+
+        #[cfg(target_arch = "aarch64")]
+        {
+            unsafe { IVec4A16(vreinterpretq_s32_u32(self.0)) }
+        }
     }
 
     /// Reinterprets the bits as floating-point lanes.
     #[inline]
     pub fn cast_f32(self) -> Vec4A16 {
-        unsafe { Vec4A16(_mm_castsi128_ps(self.0)) }
+        #[cfg(target_arch = "x86_64")]
+        {
+            unsafe { Vec4A16(_mm_castsi128_ps(self.0)) }
+        }
+
+        #[cfg(target_arch = "aarch64")]
+        {
+            unsafe { Vec4A16(vreinterpretq_f32_u32(self.0)) }
+        }
     }
 
     /// Compares all lanes for equality.
     #[inline]
     pub fn cmp_eq(self, rhs: Self) -> Self {
-        unsafe { Self(_mm_cmpeq_epi32(self.0, rhs.0)) }
+        #[cfg(target_arch = "x86_64")]
+        {
+            unsafe { Self(_mm_cmpeq_epi32(self.0, rhs.0)) }
+        }
+
+        #[cfg(target_arch = "aarch64")]
+        {
+            unsafe { Self(vceqq_u32(self.0, rhs.0)) }
+        }
     }
 
     /// Performs a low 32-bit multiplication on every lane.
     #[inline]
     pub fn mul_lo(self, rhs: Self) -> Self {
-        unsafe { Self(_mm_mullo_epi32(self.0, rhs.0)) }
+        #[cfg(target_arch = "x86_64")]
+        {
+            unsafe { Self(_mm_mullo_epi32(self.0, rhs.0)) }
+        }
+
+        #[cfg(target_arch = "aarch64")]
+        {
+            unsafe { Self(vmulq_u32(self.0, rhs.0)) }
+        }
     }
 
     /// Performs a logical right shift on every 32-bit lane.
     #[inline]
     pub fn shr<const N: i32>(self) -> Self {
-        unsafe { Self(_mm_srli_epi32(self.0, N)) }
+        #[cfg(target_arch = "x86_64")]
+        {
+            unsafe { Self(_mm_srli_epi32(self.0, N)) }
+        }
+
+        #[cfg(target_arch = "aarch64")]
+        {
+            unsafe { Self(vshrq_n_u32(self.0, N)) }
+        }
     }
 }
 
@@ -390,7 +705,15 @@ impl fmt::Debug for UVec4A16 {
 impl From<IVec4A16> for UVec4A16 {
     #[inline]
     fn from(value: IVec4A16) -> Self {
-        Self(value.0)
+        #[cfg(target_arch = "x86_64")]
+        {
+            Self(value.0)
+        }
+
+        #[cfg(target_arch = "aarch64")]
+        {
+            unsafe { Self(vreinterpretq_u32_s32(value.0)) }
+        }
     }
 }
 
@@ -399,7 +722,15 @@ impl BitAnd for UVec4A16 {
 
     #[inline]
     fn bitand(self, rhs: Self) -> Self {
-        unsafe { Self(_mm_and_si128(self.0, rhs.0)) }
+        #[cfg(target_arch = "x86_64")]
+        {
+            unsafe { Self(_mm_and_si128(self.0, rhs.0)) }
+        }
+
+        #[cfg(target_arch = "aarch64")]
+        {
+            unsafe { Self(vandq_u32(self.0, rhs.0)) }
+        }
     }
 }
 
@@ -408,7 +739,15 @@ impl BitOr for UVec4A16 {
 
     #[inline]
     fn bitor(self, rhs: Self) -> Self {
-        unsafe { Self(_mm_or_si128(self.0, rhs.0)) }
+        #[cfg(target_arch = "x86_64")]
+        {
+            unsafe { Self(_mm_or_si128(self.0, rhs.0)) }
+        }
+
+        #[cfg(target_arch = "aarch64")]
+        {
+            unsafe { Self(vorrq_u32(self.0, rhs.0)) }
+        }
     }
 }
 
@@ -417,7 +756,15 @@ impl BitXor for UVec4A16 {
 
     #[inline]
     fn bitxor(self, rhs: Self) -> Self {
-        unsafe { Self(_mm_xor_si128(self.0, rhs.0)) }
+        #[cfg(target_arch = "x86_64")]
+        {
+            unsafe { Self(_mm_xor_si128(self.0, rhs.0)) }
+        }
+
+        #[cfg(target_arch = "aarch64")]
+        {
+            unsafe { Self(veorq_u32(self.0, rhs.0)) }
+        }
     }
 }
 
@@ -460,14 +807,24 @@ impl QuatA16 {
     /// Computes the quaternion dot product.
     #[inline]
     pub fn dot(self, rhs: Self) -> f32 {
-        unsafe {
-            let product = _mm_mul_ps(self.0.raw(), rhs.0.raw());
-            let shuf = _mm_movehdup_ps(product);
-            let sums = _mm_add_ps(product, shuf);
-            let shuf = _mm_movehl_ps(shuf, sums);
-            let sums = _mm_add_ss(sums, shuf);
+        #[cfg(target_arch = "x86_64")]
+        {
+            unsafe {
+                let product = _mm_mul_ps(self.0.raw(), rhs.0.raw());
+                let shuf = _mm_movehdup_ps(product);
+                let sums = _mm_add_ps(product, shuf);
+                let shuf = _mm_movehl_ps(shuf, sums);
+                let sums = _mm_add_ss(sums, shuf);
 
-            _mm_cvtss_f32(sums)
+                _mm_cvtss_f32(sums)
+            }
+        }
+
+        #[cfg(target_arch = "aarch64")]
+        {
+            let [x0, y0, z0, w0] = self.to_array();
+            let [x1, y1, z1, w1] = rhs.to_array();
+            x0.mul_add(x1, y0.mul_add(y1, z0.mul_add(z1, w0 * w1)))
         }
     }
 
@@ -481,6 +838,7 @@ impl QuatA16 {
     #[inline]
     pub fn normalize(self) -> Self {
         let [x, y, z, w] = self.to_array();
+
         let length = w.mul_add(w, z.mul_add(z, y.mul_add(y, x * x))).sqrt();
 
         if length <= f32::EPSILON {

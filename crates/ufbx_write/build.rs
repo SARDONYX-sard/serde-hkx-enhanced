@@ -21,6 +21,9 @@ fn main() {
 
 #[cfg(feature = "generate")]
 fn generate_binding(header: &Path, ffi_dir: &Path) {
+    let out_dir = std::path::PathBuf::from(std::env::var("OUT_DIR").expect("OUT_DIR is not set"));
+    let bindings_path = out_dir.join("bindings.rs");
+
     let bindings = bindgen::Builder::default()
         .header(header.to_string_lossy())
         .clang_arg(format!("-I{}", ffi_dir.display()))
@@ -29,6 +32,6 @@ fn generate_binding(header: &Path, ffi_dir: &Path) {
         .expect("failed to generate ufbx_write bindings");
 
     bindings
-        .write_to_file("src/bindings.rs")
-        .expect("failed to write src/bindings.rs");
+        .write_to_file(&bindings_path)
+        .expect("failed to write generated ufbx_write bindings");
 }

@@ -4,19 +4,19 @@ pub mod ser;
 
 use havok_types::QsTransform;
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Skeleton {
     pub bones: Vec<Bone>,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Bone {
     pub name: String,
     pub parent_index: i16,
     pub reference_pose: QsTransform,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Animation {
     pub duration: f32,
     pub num_frames: u32,
@@ -25,12 +25,12 @@ pub struct Animation {
     pub annotations: Vec<AnimationAnnotation>,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct AnimationFrame {
     pub transforms: Vec<QsTransform>,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct AnimationAnnotation {
     pub time: f32,
     pub text: String,

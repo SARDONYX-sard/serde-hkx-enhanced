@@ -4,13 +4,13 @@
 use std::borrow::Cow;
 
 use havok_classes::{
-    BlendHint, Classes, hkMemoryResourceContainer, hkRootLevelContainer,
-    hkRootLevelContainerNamedVariant, hkaAnimationBinding, hkaAnimationContainer,
+    AnimationType, BlendHint, Classes, hkMemoryResourceContainer, hkRootLevelContainer,
+    hkRootLevelContainerNamedVariant, hkaAnimation, hkaAnimationBinding, hkaAnimationContainer,
     hkaAnnotationTrack, hkaAnnotationTrackAnnotation, hkaSplineCompressedAnimation,
 };
 use havok_types::{NULL_STR, Pointer, StringPtr};
-use serde_hkx::{HavokSort as _, bytes::serde::hkx_header::HkxHeader};
-use serde_hkx_features::ClassMap;
+use serde_hkx::HavokSort as _;
+use serde_hkx_features::{ClassMap, Format, convert::serialize_class_map};
 
 use super::{Animation, AnimationAnnotation, Skeleton};
 use crate::{
@@ -34,21 +34,11 @@ pub fn to_hkx(
     animation: &Animation,
     fps: f32,
     annotations: &[AnimationAnnotation],
+    format: Format,
 ) -> Result<Vec<u8>, Error> {
     let animation = encode_animation(skeleton, animation, fps, annotations)?;
     let classes = build_class_map(animation);
-
-    Ok(
-        serde_hkx::to_bytes(&classes, &HkxHeader::new_skyrim_se()).map_err(|error| {
-            serde_hkx_features::error::Error::SerError {
-                input: "".into(),
-                source: Box::new(serde_hkx_features::serde::ser::SerError::Hkx {
-                    source: error,
-                    location: snafu::location!(),
-                }),
-            }
-        })?,
-    )
+    Ok(serialize_class_map(classes, format, "")?)
 }
 
 /// Builds the HKX class map containing the root-level container and the
@@ -86,12 +76,12 @@ pub fn to_hkx(
 /// ├── resourceHandles = []
 /// └── children        = []
 /// ```
-fn build_class_map<'ser>(animation: hkaSplineCompressedAnimation<'ser>) -> ClassMap<'ser> {
-    const ROOT_ID: usize = 0;
-    const ANIMATION_CONTAINER_ID: usize = 1;
-    const ANIMATION_ID: usize = 2;
-    const BINDING_ID: usize = 3;
-    const RESOURCE_CONTAINER_ID: usize = 4;
+fn build_class_map<'ser>(mut animation: hkaSplineCompressedAnimation<'ser>) -> ClassMap<'ser> {
+    const ROOT_ID: usize = 1;
+    const ANIMATION_CONTAINER_ID: usize = 2;
+    const ANIMATION_ID: usize = 3;
+    const BINDING_ID: usize = 4;
+    const RESOURCE_CONTAINER_ID: usize = 5;
 
     let root = hkRootLevelContainer {
         __ptr: Some(Pointer::new(ROOT_ID)),
@@ -142,10 +132,10 @@ fn build_class_map<'ser>(animation: hkaSplineCompressedAnimation<'ser>) -> Class
         ANIMATION_CONTAINER_ID,
         Classes::hkaAnimationContainer(animation_container),
     );
-    classes.insert(
-        ANIMATION_ID,
-        Classes::hkaSplineCompressedAnimation(animation),
-    );
+    classes.insert(ANIMATION_ID, {
+        animation.__ptr = Some(Pointer::new(ANIMATION_ID));
+        Classes::hkaSplineCompressedAnimation(animation)
+    });
     classes.insert(BINDING_ID, Classes::hkaAnimationBinding(binding));
     classes.insert(
         RESOURCE_CONTAINER_ID,
@@ -182,11 +172,13 @@ fn encode_animation<'ser>(
     let mask_and_quantization_size = transform_tracks_len * TransformMask::MASK_SIZE;
 
     Ok(hkaSplineCompressedAnimation {
-        parent: havok_classes::hkaAnimation {
+        parent: hkaAnimation {
+            m_type: AnimationType::HK_SPLINE_COMPRESSED_ANIMATION,
             m_duration: animation.duration,
             m_numberOfTransformTracks: transform_tracks_len,
             m_numberOfFloatTracks: 0,
-            m_annotationTracks: to_annotation_tracks(annotations),
+            m_extractedMotion: Pointer::null(),
+            m_annotationTracks: to_annotation_tracks(annotations, transform_tracks_len as usize),
             ..Default::default()
         },
         m_numFrames: animation.num_frames as i32,
@@ -267,25 +259,25 @@ pub(crate) struct RawTransformTrack {
 /// Annotations are grouped by their `track_index`. Empty tracks before the
 /// highest referenced track are preserved so that the resulting annotation
 /// track indices remain stable.
-fn to_annotation_tracks(annotations: &[AnimationAnnotation]) -> Vec<hkaAnnotationTrack<'_>> {
-    let max_track = annotations
-        .iter()
-        .map(|annotation| annotation.track_index as usize)
-        .max();
-
-    let Some(max_track) = max_track else {
-        return Vec::new();
-    };
-
-    let mut tracks = (0..=max_track)
+fn to_annotation_tracks(
+    annotations: &[AnimationAnnotation],
+    transform_tracks_len: usize,
+) -> Vec<hkaAnnotationTrack<'_>> {
+    let mut tracks = (0..transform_tracks_len)
         .map(|_| hkaAnnotationTrack {
             m_annotations: Vec::new(),
+            m_trackName: StringPtr::new(Some("".into())), // This is intentional and is not the same as `null` -> <hkparam name="trackName"></hkparam>
             ..Default::default()
         })
         .collect::<Vec<_>>();
 
     for annotation in annotations {
-        let track = &mut tracks[annotation.track_index as usize];
+        let track_index = annotation.track_index as usize;
+
+        // transform_tracks_len is the hard limit.
+        let Some(track) = tracks.get_mut(track_index) else {
+            continue;
+        };
 
         track.m_annotations.push(hkaAnnotationTrackAnnotation {
             m_time: annotation.time,

@@ -1,5 +1,6 @@
 use havok_types::{QsTransform, Quaternion, Vector4};
 use rayon::{iter::Either, prelude::*};
+use serde_hkx_features::Format;
 use serde_spline::hkx::ser::to_hkx;
 use std::collections::HashMap;
 use std::path::Path;
@@ -36,6 +37,7 @@ pub fn fbx_to_hkx_bytes_vec<P>(
     skeleton_path: P,
     fbx_animations: &[AnimationInput<'_>],
     fps: f32,
+    format: Format,
 ) -> std::result::Result<Vec<Vec<u8>>, Error>
 where
     P: AsRef<Path>,
@@ -44,7 +46,7 @@ where
 
     let (outputs, errors): (Vec<Vec<u8>>, Vec<Error>) =
         fbx_animations.par_iter().partition_map(|animation| {
-            match kf_to_hkx(&skeleton, animation, fps) {
+            match fbx_to_hkx(&skeleton, animation, fps, format) {
                 Ok(output) => Either::Left(output),
                 Err(error) => Either::Right(error),
             }
@@ -67,10 +69,11 @@ where
 /// Returns [`Error`] if the FPS is invalid, an FBX document cannot be
 /// loaded, an animation stack cannot be found, an FBX bone cannot be mapped
 /// to the target skeleton, or HKX encoding fails.
-pub(crate) fn kf_to_hkx(
+pub(crate) fn fbx_to_hkx(
     skeleton: &Skeleton,
     input: &AnimationInput<'_>,
     fps: f32,
+    format: Format,
 ) -> std::result::Result<Vec<u8>, Error> {
     validate_fps(fps)?;
 
@@ -81,7 +84,13 @@ pub(crate) fn kf_to_hkx(
     let anim = create_animation(scene_root, &animation)?;
     let animation = sample_animation(scene_root, &animation, &anim, skeleton, fps)?;
 
-    Ok(to_hkx(skeleton, &animation, fps, &input.annotations)?)
+    Ok(to_hkx(
+        skeleton,
+        &animation,
+        fps,
+        &input.annotations,
+        format,
+    )?)
 }
 
 fn validate_fps(fps: f32) -> std::result::Result<(), Error> {
@@ -105,15 +114,15 @@ fn load_fbx(bytes: &[u8]) -> std::result::Result<FbxDocument, Error> {
     Ok(FbxDocument { scene })
 }
 
-struct BoneMapping {
-    node_index: usize,
+struct BoneMapping<'a> {
+    node: &'a ufbx::Node,
     track_index: usize,
 }
 
-fn build_bone_mapping(
-    scene: &ufbx::Scene,
+fn build_bone_mapping<'a>(
+    scene: &'a ufbx::Scene,
     skeleton: &Skeleton,
-) -> std::result::Result<Vec<BoneMapping>, Error> {
+) -> std::result::Result<Vec<BoneMapping<'a>>, Error> {
     let mut nodes_by_name = HashMap::new();
 
     for node in &scene.nodes {
@@ -135,10 +144,7 @@ fn build_bone_mapping(
                 name: bone.name.clone(),
             })?;
 
-        mapping.push(BoneMapping {
-            node_index: node.element.element_id as usize,
-            track_index,
-        });
+        mapping.push(BoneMapping { node, track_index });
     }
 
     Ok(mapping)
@@ -176,12 +182,24 @@ fn create_animation(
     scene: &ufbx::Scene,
     animation: &FbxAnimation,
 ) -> std::result::Result<ufbx::AnimRoot, Error> {
-    let layer_ids = animation
-        .stack
-        .layers
-        .iter()
-        .map(|layer| layer.element.element_id)
-        .collect::<Vec<_>>();
+    let mut layer_ids = Vec::with_capacity(animation.stack.layers.len());
+
+    for layer in &animation.stack.layers {
+        let layer_id = layer.element.typed_id as usize;
+
+        if layer_id >= scene.anim_layers.len() {
+            return Err(Error::LoadFbx {
+                message: format!(
+                    "Animation layer typed_id {} is out of bounds for scene.anim_layers (len={})",
+                    layer_id,
+                    scene.anim_layers.len(),
+                ),
+            });
+        }
+
+        layer_ids.push(layer_id as u32);
+    }
+
     let opts = ufbx::AnimOpts {
         layer_ids: ufbx::ListOpt::Owned(layer_ids),
         ..Default::default()
@@ -216,7 +234,7 @@ fn sample_animation(
     let mut frames = Vec::with_capacity(num_frames as usize);
     for frame_index in 0..num_frames {
         let time = frame_index as f64 / fps as f64;
-        let transforms = sample_frame(scene, anim, &mapping, skeleton, time);
+        let transforms = sample_frame(anim, &mapping, skeleton, time);
         frames.push(AnimationFrame { transforms });
     }
 
@@ -230,7 +248,6 @@ fn sample_animation(
 }
 
 fn sample_frame(
-    scene: &ufbx::Scene,
     anim: &ufbx::AnimRoot,
     mapping: &[BoneMapping],
     skeleton: &Skeleton,
@@ -259,7 +276,7 @@ fn sample_frame(
 
     let mut transforms = vec![QS_TRANSFORM_IDENTITY; skeleton.bones.len()];
     for mapping in mapping {
-        let transform = scene.nodes[mapping.node_index].evaluate_transform(anim, time);
+        let transform = mapping.node.evaluate_transform(anim, time);
         transforms[mapping.track_index] = convert_transform(transform);
     }
 

@@ -1,7 +1,7 @@
 //! Apply FBX animation to Havok HKX animation.
 
-use serde_fbx::ser::{AnimationInput, fbx_to_hkx_bytes_vec};
-use serde_hkx_features::error::Error;
+use serde_fbx::de::{AnimationInput, fbx_to_hkx_bytes_vec};
+use serde_hkx_features::{Format, error::Error};
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -13,7 +13,7 @@ pub const EXAMPLES: &str = color_print::cstr!(
     r#"Examples
 
 - <blue!>Apply fbx to hkx</blue!>
-  <cyan!>hkxc from-fbx -s</cyan!> ./skeleton.hkx <cyan!>-a</cyan!> ./idle.fbx <cyan!>-o</cyan!> ./idle.hkx
+  <cyan!>hkxc from-fbx -s</cyan!> ./skeleton.hkx <cyan!>-a</cyan!> ./idle.fbx <cyan!>-o</cyan!> ./idle.hkx -v amd64
 
 - <blue!>Convert multiple fbx animations</blue!>
   <cyan!>hkxc from-fbx -s</cyan!> ./skeleton.hkx <cyan!>-a</cyan!> ./idle.fbx ./walk.fbx <cyan!>-o</cyan!> ./out/
@@ -38,6 +38,10 @@ pub(crate) struct Args {
     /// Frames per second for sampling.
     #[clap(long, default_value = "30.0")]
     pub fps: f32,
+
+    /// File format to output
+    #[clap(short = 'v', long, ignore_case = true, default_value = "amd64")]
+    pub format: Format,
 }
 
 /// Converts FBX animations into Havok HKX animations.
@@ -94,7 +98,13 @@ pub async fn from_fbx(args: &Args) -> Result<(), AnyError> {
         })
         .collect::<Vec<_>>();
 
-    let hkx_bytes = fbx_to_hkx_bytes_vec(&skeleton_bytes, &args.skeleton, &animations, args.fps)?;
+    let hkx_bytes = fbx_to_hkx_bytes_vec(
+        &skeleton_bytes,
+        &args.skeleton,
+        &animations,
+        args.fps,
+        args.format,
+    )?;
 
     let output = args.output.as_deref();
 

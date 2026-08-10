@@ -3,6 +3,7 @@ use niflib_animation::{
     de::{AnimationInput, from_kf_bytes_vec_to_hkx},
     error::Error,
 };
+use serde_hkx_features::Format;
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -12,7 +13,7 @@ pub const EXAMPLES: &str = color_print::cstr!(
     r#"Examples
 
 - <blue!>Apply kf to hkx</blue!>
-  <cyan!>hkxc from-kf -s</cyan!> ./skeleton.hkx <cyan!>-a</cyan!> ./idle.kf <cyan!>-o</cyan!> ./idle.hkx
+  <cyan!>hkxc from-kf -s</cyan!> ./skeleton.hkx <cyan!>-a</cyan!> ./idle.kf <cyan!>-o</cyan!> ./idle.hkx -v amd64
 - <blue!>Convert multiple kf animations</blue!>
   <cyan!>hkxc from-kf -s</cyan!> ./skeleton.hkx <cyan!>-a</cyan!> ./idle.kf ./walk.kf <cyan!>-o</cyan!> ./out/
   "#
@@ -36,6 +37,10 @@ pub(crate) struct Args {
     /// Frames per second for sampling.
     #[clap(long, default_value = "30.0")]
     pub fps: f32,
+
+    /// File format to output
+    #[clap(short = 'v', long, ignore_case = true, default_value = "amd64")]
+    pub format: Format,
 }
 
 /// Converts Gamebryo KF animations into Havok HKX animations.
@@ -91,8 +96,13 @@ pub async fn from_kf(args: &Args) -> Result<(), Error> {
         })
         .collect::<Vec<_>>();
 
-    let hkx_bytes =
-        from_kf_bytes_vec_to_hkx(&skeleton_bytes, &args.skeleton, &animations, args.fps)?;
+    let hkx_bytes = from_kf_bytes_vec_to_hkx(
+        &skeleton_bytes,
+        &args.skeleton,
+        &animations,
+        args.fps,
+        args.format,
+    )?;
 
     let output = args.output.as_deref();
 

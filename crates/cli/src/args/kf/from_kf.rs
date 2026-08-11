@@ -92,14 +92,14 @@ pub async fn from_kf(args: &Args) -> Result<(), Error> {
         .map(|(path, bytes)| AnimationInput {
             bytes,
             path: path.as_path(),
-            annotations: Vec::new(),
+            annotations: Vec::new(), // TODO: support arg.annotation
         })
         .collect::<Vec<_>>();
 
     let hkx_bytes = from_kf_bytes_vec_to_hkx(
         &skeleton_bytes,
         &args.skeleton,
-        &animations,
+        animations,
         args.fps,
         args.format,
     )?;

@@ -35,7 +35,7 @@ pub struct AnimationInput<'a> {
 pub fn fbx_to_hkx_bytes_vec<P>(
     skeleton_bytes: &[u8],
     skeleton_path: P,
-    fbx_animations: &[AnimationInput<'_>],
+    fbx_animations: Vec<AnimationInput<'_>>,
     fps: f32,
     format: Format,
 ) -> Result<Vec<Vec<u8>>, Error>
@@ -45,7 +45,7 @@ where
     let skeleton = Skeleton::from_bytes(skeleton_bytes, skeleton_path.as_ref())?;
 
     let (outputs, errors): (Vec<Vec<u8>>, Vec<Error>) =
-        fbx_animations.par_iter().partition_map(|animation| {
+        fbx_animations.into_par_iter().partition_map(|animation| {
             match fbx_to_hkx(&skeleton, animation, fps, format) {
                 Ok(output) => Either::Left(output),
                 Err(error) => Either::Right(error),
@@ -71,7 +71,7 @@ where
 /// to the target skeleton, or HKX encoding fails.
 pub(crate) fn fbx_to_hkx(
     skeleton: &Skeleton,
-    input: &AnimationInput<'_>,
+    input: AnimationInput<'_>,
     fps: f32,
     format: Format,
 ) -> Result<Vec<u8>, Error> {
@@ -82,15 +82,16 @@ pub(crate) fn fbx_to_hkx(
 
     let animation = select_animation(scene_root, input.animation_stack)?;
     let anim = create_animation(scene_root, &animation)?;
-    let animation = sample_animation(scene_root, &animation, &anim, skeleton, fps)?;
-
-    Ok(to_hkx(
-        skeleton,
+    let animation = sample_animation(
+        scene_root,
         &animation,
+        &anim,
+        skeleton,
         fps,
-        &input.annotations,
-        format,
-    )?)
+        input.annotations,
+    )?;
+
+    Ok(to_hkx(skeleton, &animation, fps, format)?)
 }
 
 fn validate_fps(fps: f32) -> Result<(), Error> {
@@ -216,6 +217,7 @@ fn sample_animation(
     anim: &ufbx::AnimRoot,
     skeleton: &Skeleton,
     fps: f32,
+    annotations: Vec<AnimationAnnotation>,
 ) -> Result<Animation, Error> {
     let duration = (animation.stack.time_end - animation.stack.time_begin) as f32;
     if !duration.is_finite() || duration < 0.0 {
@@ -243,7 +245,7 @@ fn sample_animation(
         num_frames,
         num_tracks: skeleton.bones.len() as u32,
         frames,
-        annotations: Vec::new(), // FIXME
+        annotations,
     })
 }
 

@@ -33,10 +33,9 @@ pub fn to_hkx(
     skeleton: &Skeleton,
     animation: &Animation,
     fps: f32,
-    annotations: &[AnimationAnnotation],
     format: Format,
 ) -> Result<Vec<u8>, Error> {
-    let animation = encode_animation(skeleton, animation, fps, annotations)?;
+    let animation = encode_animation(skeleton, animation, fps)?;
     let root_bone_name = skeleton
         .bones
         .first()
@@ -161,7 +160,6 @@ fn encode_animation<'ser>(
     skeleton: &'ser Skeleton,
     animation: &'ser Animation,
     fps: f32,
-    annotations: &'ser [AnimationAnnotation],
 ) -> Result<hkaSplineCompressedAnimation<'ser>, Error> {
     validate_fps(fps)?;
     validate_animation(skeleton, animation)?;
@@ -186,7 +184,10 @@ fn encode_animation<'ser>(
             m_numberOfTransformTracks: transform_tracks_len,
             m_numberOfFloatTracks: 0,
             m_extractedMotion: Pointer::null(),
-            m_annotationTracks: to_annotation_tracks(annotations, transform_tracks_len as usize),
+            m_annotationTracks: to_annotation_tracks(
+                &animation.annotations,
+                transform_tracks_len as usize,
+            ),
             ..Default::default()
         },
         m_numFrames: animation.num_frames as i32,

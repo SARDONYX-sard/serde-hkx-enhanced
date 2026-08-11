@@ -94,14 +94,14 @@ pub async fn from_fbx(args: &Args) -> Result<(), AnyError> {
             bytes,
             path: path.as_path(),
             animation_stack: None,
-            annotations: Vec::new(),
+            annotations: Vec::new(), // TODO: support arg.annotation
         })
         .collect::<Vec<_>>();
 
     let hkx_bytes = fbx_to_hkx_bytes_vec(
         &skeleton_bytes,
         &args.skeleton,
-        &animations,
+        animations,
         args.fps,
         args.format,
     )?;

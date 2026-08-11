@@ -7,9 +7,6 @@
 //! ffi api ref:
 //! - https://raw.githubusercontent.com/ufbx/ufbx-write/refs/heads/main/ufbx_write.h
 //! - https://raw.githubusercontent.com/ufbx/ufbx-write/refs/heads/main/ufbx_write.c
-
-use std::ffi::CString;
-
 use havok_types::{QsTransform, Quaternion, Vector4};
 use serde_spline::hkx::{Animation, Skeleton};
 use ufbx_write::sys;
@@ -117,12 +114,8 @@ fn set_node_name(
     node: sys::ufbxw_node,
     name: &str,
 ) -> Result<(), Error> {
-    let name = CString::new(name).map_err(|_| Error::ExportFbx {
-        message: format!("FBX node name contains an interior NUL byte: {name:?}"),
-    })?;
-
     unsafe {
-        sys::ufbxw_set_name(scene, node.id, name.as_ptr());
+        sys::ufbxw_set_name_len(scene, node.id, name.as_ptr().cast(), name.len());
     }
 
     Ok(())
@@ -301,7 +294,6 @@ fn create_animation(
 /// C string or if `ufbx_write` reports a save failure.
 fn save_memory(scene: *mut sys::ufbxw_scene) -> Result<Vec<u8>, Error> {
     let mut opts = unsafe { std::mem::zeroed::<sys::ufbxw_save_opts>() };
-
     opts.format = sys::ufbxw_save_format_UFBXW_SAVE_FORMAT_BINARY;
     // opts.format = sys::ufbxw_save_format_UFBXW_SAVE_FORMAT_ASCII;
     opts.version = 7500;
@@ -309,18 +301,10 @@ fn save_memory(scene: *mut sys::ufbxw_scene) -> Result<Vec<u8>, Error> {
     let mut buffer = unsafe { core::mem::zeroed::<sys::ufbxw_write_buffer>() };
     let mut error = unsafe { std::mem::zeroed::<sys::ufbxw_error>() };
 
-    let ok = unsafe { sys::ufbxw_save_memory(scene, &mut buffer, &opts, &mut error) };
-
-    if !ok {
-        let message = {
-            if error.description.is_empty() {
-                "ufbxw_save_memory() failed".to_owned()
-            } else {
-                c_string_or_unknown(error.description.as_ptr())
-            }
-        };
-
-        return Err(Error::ExportFbx { message });
+    if !unsafe { sys::ufbxw_save_memory(scene, &mut buffer, &opts, &mut error) } {
+        return Err(Error::ExportFbx {
+            message: super::fbx_error::Error::from(error).to_string(),
+        });
     }
 
     if buffer.data.is_null() && buffer.size != 0 {
@@ -328,14 +312,11 @@ fn save_memory(scene: *mut sys::ufbxw_scene) -> Result<Vec<u8>, Error> {
             message: "ufbxw_save_memory() returned an invalid buffer".to_owned(),
         });
     }
-
     let data =
         unsafe { std::slice::from_raw_parts(buffer.data.cast::<u8>(), buffer.size).to_vec() };
 
-    unsafe {
-        sys::ufbxw_free_write_buffer(buffer);
-    }
-
+    // Safety: That's because we're converting the buffer to a new Vec using `to_vec` right before that.
+    unsafe { sys::ufbxw_free_write_buffer(buffer) };
     Ok(data)
 }
 
@@ -444,23 +425,4 @@ fn validate_animation(skeleton: &Skeleton, animation: &Animation) -> Result<(), 
     }
 
     Ok(())
-}
-
-/// Converts a C string pointer returned by `ufbx_write` into an owned Rust
-/// error message.
-///
-/// # Errors
-///
-/// This helper does not return a Rust error. Invalid or null C strings are
-/// converted to a fallback message.
-fn c_string_or_unknown(value: *const std::ffi::c_char) -> String {
-    if value.is_null() {
-        return "ufbx_write reported an unknown error".to_owned();
-    }
-
-    unsafe {
-        std::ffi::CStr::from_ptr(value)
-            .to_string_lossy()
-            .into_owned()
-    }
 }

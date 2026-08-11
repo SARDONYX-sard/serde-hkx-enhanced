@@ -1,4 +1,5 @@
-pub(crate) mod fbx;
+mod fbx;
+mod fbx_error;
 
 use rayon::iter::Either;
 use rayon::prelude::*;

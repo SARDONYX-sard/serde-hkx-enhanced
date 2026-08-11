@@ -164,7 +164,7 @@ pub enum Error {
 
     #[snafu(display("unknown ufbxw error type {kind} in {function}: {description}"))]
     Unknown {
-        kind: i32,
+        kind: ufbx_write::sys::ufbxw_error_type,
         function: String,
         description: String,
     },

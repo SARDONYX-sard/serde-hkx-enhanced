@@ -8,6 +8,10 @@ use tokio::time::Instant;
 
 type AnyError = Box<dyn std::error::Error + Send + Sync + 'static>;
 
+#[cfg(feature = "mimalloc")]
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 #[tokio::main]
 async fn main() {
     let start = Instant::now();

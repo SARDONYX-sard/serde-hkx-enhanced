@@ -19,6 +19,7 @@ clap = { workspace = true } # For CLI
 clap_complete_command = "0.6.1" # Generate auto completion
 color-print = "0.3.7" # To color example help
 indicatif = { version = "0.18.6", features = ["rayon"] } # CLI progress bar
+mimalloc = { version = "0.1.50", optional = true }
 serde_hkx_features = { workspace = true, features = ["clap", "tracing"] }
 tokio = { workspace = true, features = [
   "macros",
@@ -42,7 +43,7 @@ winres = "0.1.12"    # Meta information can be added to the exe.
 
 
 [features]
-default = ["color", "fbx", "kf"]
+default = ["color", "mimalloc", "fbx", "kf"]
 
 # ANSI color
 color = []
@@ -52,6 +53,9 @@ extra_fmt = ["serde_hkx_features/extra_fmt"]
 
 kf = ["dep:niflib_animation"]
 fbx = ["dep:serde_fbx"]
+
+# The patch time was reduced by 4secs.
+mimalloc = ["dep:mimalloc"]
 
 [lints]
 workspace = true

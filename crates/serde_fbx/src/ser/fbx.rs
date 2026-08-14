@@ -32,6 +32,7 @@ use crate::error::Error;
 pub(crate) fn export_fbx(
     skeleton: &Skeleton,
     animation: &AnimationInput,
+    fps: f32,
 ) -> Result<Vec<u8>, Error> {
     let animation = Animation::from_bytes(skeleton, animation.bytes, animation.path)?;
     validate_animation(skeleton, &animation)?;
@@ -43,7 +44,7 @@ pub(crate) fn export_fbx(
         });
     }
 
-    let result = export_scene(scene, skeleton, &animation);
+    let result = export_scene(scene, skeleton, &animation, fps);
     unsafe { sys::ufbxw_free_scene(scene) };
     result
 }
@@ -60,15 +61,13 @@ fn export_scene(
     scene: *mut sys::ufbxw_scene,
     skeleton: &Skeleton,
     animation: &Animation,
+    fps: f32,
 ) -> Result<Vec<u8>, Error> {
-    set_target_coordinate_axes(scene);
+    set_target_coordinate_axes(scene, fps);
     let nodes = create_skeleton(scene, skeleton)?;
 
     create_animation(scene, &nodes, animation)?;
-
-    unsafe {
-        sys::ufbxw_prepare_scene(scene, &sys::ufbxw_default_prepare_opts);
-    }
+    unsafe { sys::ufbxw_prepare_scene(scene, &sys::ufbxw_default_prepare_opts) };
 
     save_memory(scene)
 }
@@ -188,17 +187,19 @@ fn set_parent_nodes(
 /// `front` denotes the axis pointing *backward*, opposite of the character's
 /// forward-facing direction (this mirrors `ufbx`'s `target_axes` convention).
 /// If the imported result faces the wrong way, flip the sign of `front`.
-fn set_target_coordinate_axes(scene: *mut sys::ufbxw_scene) {
+fn set_target_coordinate_axes(scene: *mut sys::ufbxw_scene, fps: f32) {
     // Without this, characters will face the Z-axis by default in Blender.
     // Doing this will make the characters face the Y-axis.
-    let axes = sys::ufbxw_coordinate_axes {
+    const AXES: sys::ufbxw_coordinate_axes = sys::ufbxw_coordinate_axes {
         right: sys::ufbxw_coordinate_axis_UFBXW_COORDINATE_AXIS_POSITIVE_X,
         up: sys::ufbxw_coordinate_axis_UFBXW_COORDINATE_AXIS_POSITIVE_Z,
         front: sys::ufbxw_coordinate_axis_UFBXW_COORDINATE_AXIS_NEGATIVE_Y,
     };
 
     unsafe {
-        sys::ufbxw_scene_set_coordinate_axes(scene, axes);
+        sys::ufbxw_scene_set_coordinate_axes(scene, AXES);
+        sys::ufbxw_scene_set_unit_scale_factor(scene, 30.0); // default blender view too small.
+        sys::ufbxw_scene_set_custom_frame_rate(scene, fps as f64);
     }
 }
 
@@ -213,12 +214,22 @@ fn create_animation(
     nodes: &[sys::ufbxw_node],
     animation: &Animation,
 ) -> Result<(), Error> {
-    let stack = unsafe { sys::ufbxw_create_anim_stack(scene) };
-    let layer = unsafe { sys::ufbxw_create_anim_layer(scene, stack) };
-
     fn seconds_to_ktime(seconds: f32) -> i64 {
         (seconds as f64 * 46_186_158_000.0).round() as i64
     }
+
+    fn frame_time(duration: f32, frame_count: usize, frame_index: usize) -> i64 {
+        if frame_count <= 1 {
+            return 0;
+        }
+
+        let seconds = duration as f64 * frame_index as f64 / (frame_count - 1) as f64;
+        (seconds * 46_186_158_000.0).round() as i64
+    }
+
+    let stack = unsafe { sys::ufbxw_create_anim_stack(scene) };
+    let layer = unsafe { sys::ufbxw_create_anim_layer(scene, stack) };
+
     let duration = seconds_to_ktime(animation.duration);
 
     unsafe {
@@ -233,15 +244,6 @@ fn create_animation(
         let scaling = unsafe { sys::ufbxw_node_animate_scaling(scene, node, layer) };
 
         for (frame_index, frame) in animation.frames.iter().enumerate() {
-            fn frame_time(duration: f32, frame_count: usize, frame_index: usize) -> i64 {
-                if frame_count <= 1 {
-                    return 0;
-                }
-
-                let seconds = duration as f64 * frame_index as f64 / (frame_count - 1) as f64;
-                (seconds * 46_186_158_000.0).round() as i64
-            }
-
             let time = frame_time(animation.duration, animation.frames.len(), frame_index);
             let transform = &frame.transforms[bone_index];
 

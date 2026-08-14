@@ -28,13 +28,11 @@ pub fn export_fbx(
     animations: &[AnimationInput<'_>],
     fps: f32,
 ) -> Result<Vec<Vec<u8>>, Error> {
-    let _fps = fps;
-
     let skeleton = Skeleton::from_bytes(skeleton_bytes, skeleton_path)?;
 
     let (fbx_bytes_list, errors): (Vec<Vec<u8>>, Vec<Error>) =
         animations.par_iter().partition_map(|animation| {
-            match fbx::export_fbx(&skeleton, animation) {
+            match fbx::export_fbx(&skeleton, animation, fps) {
                 Ok(fbx) => Either::Left(fbx),
                 Err(error) => Either::Right(error),
             }

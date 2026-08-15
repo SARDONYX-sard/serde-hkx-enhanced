@@ -164,35 +164,38 @@ fn encode_animation<'ser>(
     validate_fps(fps)?;
     validate_animation(skeleton, animation)?;
 
+    const MAX_FRAMES_PER_BLOCK: u32 = 256;
+
     let encoded = SplineDecompressor::from_animation(skeleton, animation)?.encode(0)?;
 
-    let block_duration = 8.5; // TODO: valid?
-
+    let num_frames = animation.num_frames;
+    let duration = animation.duration;
+    let frame_duration = duration / (num_frames - 1) as f32;
+    let block_duration = (MAX_FRAMES_PER_BLOCK - 1) as f32 * frame_duration;
     let block_inverse_duration = if block_duration > 0.0 {
         1.0 / block_duration
     } else {
         0.0
     };
-
+    let num_blocks = ((num_frames + MAX_FRAMES_PER_BLOCK - 3) / (MAX_FRAMES_PER_BLOCK - 1)).max(1);
     let transform_tracks_len = animation.num_tracks as i32;
     let mask_and_quantization_size = transform_tracks_len * TransformMask::MASK_SIZE;
+    let annotations = to_annotation_tracks(&animation.annotations, transform_tracks_len as usize);
 
     Ok(hkaSplineCompressedAnimation {
+        __ptr: None, // Set when call build_class_map
         parent: hkaAnimation {
             m_type: AnimationType::HK_SPLINE_COMPRESSED_ANIMATION,
             m_duration: animation.duration,
             m_numberOfTransformTracks: transform_tracks_len,
             m_numberOfFloatTracks: 0,
             m_extractedMotion: Pointer::null(),
-            m_annotationTracks: to_annotation_tracks(
-                &animation.annotations,
-                transform_tracks_len as usize,
-            ),
+            m_annotationTracks: annotations,
             ..Default::default()
         },
         m_numFrames: animation.num_frames as i32,
-        m_numBlocks: encoded.block_offsets.len() as i32,
-        m_maxFramesPerBlock: 256, // TODO: valid?
+        m_numBlocks: num_blocks as i32,
+        m_maxFramesPerBlock: MAX_FRAMES_PER_BLOCK as i32,
         m_maskAndQuantizationSize: mask_and_quantization_size,
         m_blockDuration: block_duration,
         m_blockInverseDuration: block_inverse_duration,
@@ -203,7 +206,6 @@ fn encode_animation<'ser>(
         m_floatOffsets: Vec::new(),
         m_data: encoded.data,
         m_endian: 0, // little endian: 0
-        ..Default::default()
     })
 }
 

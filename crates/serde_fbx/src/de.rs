@@ -224,6 +224,14 @@ fn sample_animation(
         return Err(Error::InvalidDuration { duration });
     }
 
+    #[cfg(feature = "tracing")]
+    tracing::debug!(
+        "stack element name={}, begin={}, end={}, duration={duration}, fps={fps}",
+        animation.stack.element.name,
+        animation.stack.time_begin,
+        animation.stack.time_end,
+    );
+
     let num_frames = (duration * fps).ceil() as u32 + 1;
     if num_frames == 0 {
         return Err(Error::InvalidFrameCount {

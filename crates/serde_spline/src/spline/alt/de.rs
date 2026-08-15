@@ -256,8 +256,6 @@ macro_rules! bail {
     }};
 }
 
-type Input<'a> = &'a [u8];
-
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -267,7 +265,7 @@ type Input<'a> = &'a [u8];
 /// Uses the virtual address of the slice pointer, which matches what
 /// `BinaryReaderEx.Pad()` does in the C# reference implementation.
 #[inline]
-fn pad_to_abs(input: &mut Input, align: usize) {
+fn pad_to_abs(input: &mut &[u8], align: usize) {
     let addr = input.as_ptr() as usize;
     let mis = addr % align;
     if mis != 0 {
@@ -276,7 +274,7 @@ fn pad_to_abs(input: &mut Input, align: usize) {
 }
 
 fn read_quantized_float(
-    input: &mut Input,
+    input: &mut &[u8],
     min: f32,
     max: f32,
     qt: ScalarQuantizationType,
@@ -328,7 +326,7 @@ pub struct QsTransformMask {
     pub scale_flags: FlagOffset,
 }
 
-fn parse_qs_transform_mask(input: &mut Input) -> ModalResult<QsTransformMask> {
+fn parse_qs_transform_mask(input: &mut &[u8]) -> ModalResult<QsTransformMask> {
     let qt = u8
         .context(StrContext::Expected(StrContextValue::Description(
             "QsTransformMask byte 0: quantization types (pos[1:0] rot[5:2] scale[7:6])",
@@ -469,7 +467,7 @@ fn scatter3_to4(a: f32, b: f32, c: f32, skip: usize) -> [f32; 4] {
 }
 
 /// Decode a POLAR32-packed quaternion (see module docs for the bit layout).
-fn read_quat_polar32(input: &mut Input) -> ModalResult<RawQuat> {
+fn read_quat_polar32(input: &mut &[u8]) -> ModalResult<RawQuat> {
     use core::f32::consts::{FRAC_PI_2, FRAC_PI_4};
 
     let c = le_u32
@@ -514,7 +512,7 @@ fn read_quat_polar32(input: &mut Input) -> ModalResult<RawQuat> {
 }
 
 /// Decode a THREECOMP48-packed quaternion (3 × `i16`).
-fn read_quat_three_comp48(input: &mut Input) -> ModalResult<RawQuat> {
+fn read_quat_three_comp48(input: &mut &[u8]) -> ModalResult<RawQuat> {
     // (1 << 15) - 1 overflows i16, so write the bit pattern directly.
     const MASK: i16 = 0b0111_1111_1111_1111; // 0x7FFF
     const FRACTAL: f32 = 0.000_043_161;
@@ -560,7 +558,7 @@ fn read_quat_three_comp48(input: &mut Input) -> ModalResult<RawQuat> {
 /// reconstructed from the unit-length constraint) and a 1-bit sign for that
 /// reconstructed component. Each 12-bit component is dequantized onto
 /// `[-1/√2, 1/√2]`.
-fn read_quat_three_comp40(input: &mut Input) -> ModalResult<RawQuat> {
+fn read_quat_three_comp40(input: &mut &[u8]) -> ModalResult<RawQuat> {
     let b = take(5_usize)
         .context(StrContext::Expected(StrContextValue::Description(
             "THREECOMP40 quaternion: 5 packed bytes",
@@ -589,7 +587,7 @@ fn read_quat_three_comp40(input: &mut Input) -> ModalResult<RawQuat> {
     Ok(RawQuat::new(out[0], out[1], out[2], out[3]))
 }
 
-fn read_quantized_quat(input: &mut Input, qt: RotationQuantizationType) -> ModalResult<RawQuat> {
+fn read_quantized_quat(input: &mut &[u8], qt: RotationQuantizationType) -> ModalResult<RawQuat> {
     match qt {
         RotationQuantizationType::Polar32 => read_quat_polar32(input),
         RotationQuantizationType::ThreeComp40 => read_quat_three_comp40(input),
@@ -658,7 +656,7 @@ struct Vec3Section<'a> {
 /// STATIC values and SPLINE bounds inline, in axis order, rather than
 /// treating "static" and "spline" as separate mutually-exclusive layouts.
 fn parse_vec3_section<'a>(
-    input: &mut Input<'a>,
+    input: &mut &'a [u8],
     flags: FlagOffset,
     qt: ScalarQuantizationType,
 ) -> ModalResult<Vec3Section<'a>> {
@@ -831,7 +829,7 @@ enum RotationCurve<'a> {
 }
 
 fn parse_rotation_section<'a>(
-    input: &mut Input<'a>,
+    input: &mut &'a [u8],
     flags: FlagOffset,
     qt: RotationQuantizationType,
 ) -> ModalResult<RotationCurve<'a>> {
@@ -1090,12 +1088,9 @@ where
     P: AsRef<std::path::Path>,
     P2: AsRef<std::path::Path>,
 {
-    let skeleton = serde_hkx_features::convert::process_serde_with(
-        skeleton_bytes,
-        skeleton_path,
-        into_skeleton,
-        into_skeleton,
-    )?;
+    use serde_hkx_features::convert::process_serde_with;
+
+    let skeleton = process_serde_with(skeleton_bytes, skeleton_path, into_skeleton, into_skeleton)?;
 
     let f = |class_map: ClassMap| {
         let class = class_map
@@ -1109,7 +1104,7 @@ where
         let num_frames = spline.m_numFrames as usize;
         let num_blocks = spline.m_numBlocks;
         if num_blocks != 1 {
-            bail!(format!("multi block animation unsupported: {}", num_blocks));
+            bail!(format!("multi block animation unsupported: {num_blocks}"));
         }
 
         let mask_size = spline.m_maskAndQuantizationSize as usize;
@@ -1147,37 +1142,26 @@ where
         })
     };
 
-    Ok((
-        serde_hkx_features::convert::process_serde_with(anim_bytes, anim_path, f, f)?,
-        skeleton,
-    ))
+    Ok((process_serde_with(anim_bytes, anim_path, f, f)?, skeleton))
 }
 
 fn find_annotations(spline: &hkaSplineCompressedAnimation<'_>) -> Vec<AnimationAnnotation> {
-    let mut result = Vec::new();
-
-    for (track_index, track) in spline.parent.m_annotationTracks.iter().enumerate() {
-        for annotation in track.m_annotations.iter() {
-            let time = annotation.m_time;
-            let text = &annotation.m_text;
-
-            if !text.is_null() {
-                result.push(AnimationAnnotation {
-                    time,
-                    text: text.to_string(),
+    spline
+        .parent
+        .m_annotationTracks
+        .iter()
+        .enumerate()
+        .flat_map(|(track_index, track)| {
+            track
+                .m_annotations
+                .iter()
+                .map(move |annotation| AnimationAnnotation {
+                    time: annotation.m_time,
+                    text: annotation.m_text.to_string(),
                     track_index,
-                });
-            }
-        }
-    }
-
-    result.sort_by(|a, b| {
-        a.time
-            .partial_cmp(&b.time)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
-
-    result
+                })
+        })
+        .collect()
 }
 
 fn read_spline(

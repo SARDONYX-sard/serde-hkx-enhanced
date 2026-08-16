@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+//
+// Reference:
+// - https://github.com/BadDogSkyrim/PyNifly/blob/7fd4644f5a6416c1502983b7d49a853eb0d24509/io_scene_nifly/hkx/skeleton_hkx.py
 use crate::error::Error;
 use crate::spline::SplineDecompressor;
 use crate::spline::math::{
@@ -96,9 +100,7 @@ impl SplineDecompressor {
                 let (position, position_types) =
                     build_vector_track(&raw.position, 0.0, block_frame_count);
 
-                let (rotation, rotation_type) =
-                    build_rotation_track(&raw.rotation, block_frame_count);
-
+                let (rotation, rotation_type) = build_rotation_track(&raw.rotation)?;
                 let (scale, scale_types) = build_vector_track(&raw.scale, 1.0, block_frame_count);
 
                 let mask = build_mask(position_types, rotation_type, scale_types);
@@ -190,37 +192,55 @@ fn static_value(values: &[f32], kind: SplineTrackType, identity_value: f32) -> f
     }
 }
 
+const CLASSIFICATION_EPSILON: f32 = 1.0e-5;
 fn classify_axis(values: &[f32], identity_value: f32) -> SplineTrackType {
-    #[expect(
-        clippy::float_cmp,
-        reason = "Spline representation must preserve exact f32 classification."
-    )]
-    if values.iter().all(|&value| value == identity_value) {
+    if values
+        .iter()
+        .all(|&value| (value - identity_value).abs() < CLASSIFICATION_EPSILON)
+    {
         SplineTrackType::Identity
-    } else if values.windows(2).all(|window| window[0] == window[1]) {
-        SplineTrackType::Static
     } else {
-        SplineTrackType::Dynamic
+        let first = values[0];
+
+        if values
+            .iter()
+            .all(|&value| (value - first).abs() < CLASSIFICATION_EPSILON)
+        {
+            SplineTrackType::Static
+        } else {
+            SplineTrackType::Dynamic
+        }
     }
 }
 
-fn build_rotation_track(
-    samples: &[[f32; 4]],
-    frame_count: usize,
-) -> (SplineTrackQuat, SplineTrackType) {
-    #[expect(
-        clippy::float_cmp,
-        reason = "Static quaternion detection must preserve exact samples."
-    )]
-    if samples.windows(2).all(|window| window[0] == window[1]) {
-        let [x, y, z, w] = samples[0];
+fn build_rotation_track(samples: &[[f32; 4]]) -> Result<(SplineTrackQuat, SplineTrackType), Error> {
+    let is_identity = samples.iter().all(|q| {
+        q[0].abs() < CLASSIFICATION_EPSILON
+            && q[1].abs() < CLASSIFICATION_EPSILON
+            && q[2].abs() < CLASSIFICATION_EPSILON
+            && (q[3].abs() - 1.0).abs() < CLASSIFICATION_EPSILON
+    });
 
-        return (
+    if is_identity {
+        return Ok((SplineTrackQuat::Identity, SplineTrackType::Identity));
+    }
+
+    let first = samples[0];
+
+    let is_static = samples.iter().all(|q| {
+        (q[0] - first[0]).abs() < CLASSIFICATION_EPSILON
+            && (q[1] - first[1]).abs() < CLASSIFICATION_EPSILON
+            && (q[2] - first[2]).abs() < CLASSIFICATION_EPSILON
+            && (q[3] - first[3]).abs() < CLASSIFICATION_EPSILON
+    });
+
+    if is_static {
+        return Ok((
             SplineTrackQuat::Static(SplineStaticTrack {
-                value: QuatA16::new(x, y, z, w),
+                value: QuatA16::new(first[0], first[1], first[2], first[3]),
             }),
             SplineTrackType::Static,
-        );
+        ));
     }
 
     let track = samples
@@ -228,14 +248,14 @@ fn build_rotation_track(
         .map(|&[x, y, z, w]| QuatA16::new(x, y, z, w))
         .collect();
 
-    (
+    Ok((
         SplineTrackQuat::Dynamic(SplineDynamicTrackQuat {
             track,
-            knots: clamped_uniform_knots(frame_count, SPLINE_DEGREE as usize),
+            knots: Vec::new(), // ser unused
             degree: SPLINE_DEGREE,
         }),
         SplineTrackType::Dynamic,
-    )
+    ))
 }
 
 fn build_mask(

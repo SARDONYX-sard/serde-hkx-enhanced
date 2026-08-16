@@ -1,3 +1,8 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+//
+// Reference:
+// - https://github.com/BadDogSkyrim/PyNifly/blob/7fd4644f5a6416c1502983b7d49a853eb0d24509/docs/hkx_animation_format.md
+
 //! Encodes sampled FBX animation data into a Havok
 //! `hkaSplineCompressedAnimation`.
 
@@ -156,6 +161,9 @@ fn build_class_map<'ser>(
     classes
 }
 
+/// ref
+/// - https://github.com/BadDogSkyrim/PyNifly/blob/7fd4644f5a6416c1502983b7d49a853eb0d24509/io_scene_nifly/hkx/anim_skyrim.py#L1016
+/// - https://github.com/BadDogSkyrim/PyNifly/blob/7fd4644f5a6416c1502983b7d49a853eb0d24509/docs/hkx_animation_format.md
 fn encode_animation<'ser>(
     skeleton: &'ser Skeleton,
     animation: &'ser Animation,
@@ -165,12 +173,10 @@ fn encode_animation<'ser>(
     validate_animation(skeleton, animation)?;
 
     const MAX_FRAMES_PER_BLOCK: u32 = 256;
-
     let encoded = SplineDecompressor::from_animation(skeleton, animation)?.encode()?;
 
     let num_frames = animation.num_frames;
-    let duration = animation.duration;
-    let frame_duration = duration / (num_frames - 1) as f32;
+    let frame_duration = 1.0 / fps;
     let block_duration = (MAX_FRAMES_PER_BLOCK - 1) as f32 * frame_duration;
     let block_inverse_duration = if block_duration > 0.0 {
         1.0 / block_duration
@@ -199,7 +205,7 @@ fn encode_animation<'ser>(
         m_maskAndQuantizationSize: mask_and_quantization_size,
         m_blockDuration: block_duration,
         m_blockInverseDuration: block_inverse_duration,
-        m_frameDuration: 1.0 / fps,
+        m_frameDuration: frame_duration,
         m_blockOffsets: encoded.block_offsets,
         m_floatBlockOffsets: Vec::new(),
         m_transformOffsets: Vec::new(),

@@ -23,11 +23,12 @@
 
 - kf
   - [x] Skeleton + animation.hkx => kf
-  - [x] kf => Skeleton + animation.hkx (It hasn't been released yet, and there's something slightly off about the spline serialization.)
+  - [x] kf => Skeleton + animation.hkx
 
 - fbx
   - [x] skeleton + animation.hkx => fbx
-  - [ ] fbx => skeleton + animation.hkx
+  - [x] fbx => skeleton + animation.hkx
+  - [ ] Fill the mesh by specifying .nif
 
 ## build CLI
 

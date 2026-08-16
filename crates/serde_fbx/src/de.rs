@@ -31,8 +31,8 @@ pub struct AnimationInput<'a> {
 /// # Errors
 ///
 /// Returns [`Error`] if the skeleton cannot be decoded, an FBX document
-/// cannot be loaded or sampled, an animation stack cannot be found, an FBX
-/// bone cannot be mapped to the target skeleton, or HKX encoding fails.
+/// cannot be loaded or sampled, an animation stack cannot be found, an
+/// FBX bone cannot be mapped to the target skeleton, or HKX encoding fails.
 pub fn fbx_to_hkx_bytes_vec<P>(
     skeleton_bytes: &[u8],
     skeleton_path: P,
@@ -67,9 +67,9 @@ where
 /// # Errors
 ///
 /// Returns [`Error`] if the FPS is invalid, an FBX document cannot be
-/// loaded, an animation stack cannot be found, an FBX bone cannot be mapped
-/// to the target skeleton, the animation duration is invalid, or HKX
-/// encoding fails.
+/// loaded, an animation stack cannot be found, an FBX bone cannot be
+/// mapped to the target skeleton, the animation duration is invalid,
+/// or HKX encoding fails.
 pub(crate) fn fbx_to_hkx(
     skeleton: &Skeleton,
     input: AnimationInput<'_>,
@@ -77,7 +77,6 @@ pub(crate) fn fbx_to_hkx(
     format: Format,
 ) -> Result<Vec<u8>, Error> {
     validate_fps(fps)?;
-
     let doc = load_fbx(input.bytes)?;
     let scene = &doc.scene;
 
@@ -164,21 +163,69 @@ fn select_animation<'a>(
     scene: &'a ufbx::SceneRoot,
     requested_name: Option<&str>,
 ) -> Result<FbxAnimation<'a>, Error> {
-    let stacks = &scene.anim_stacks;
+    #[cfg(feature = "tracing")]
+    tracing::debug!(
+        requested_name = ?requested_name,
+        scene_anim_time_begin = scene.anim.time_begin,
+        scene_anim_time_end = scene.anim.time_end,
+        anim_stack_count = scene.anim_stacks.len(),
+        "Selecting FBX animation"
+    );
 
-    if stacks.is_empty() {
+    #[cfg(feature = "tracing")]
+    for (index, stack) in scene.anim_stacks.iter().enumerate() {
+        tracing::debug!(
+            index,
+            stack_name = %stack.element.name,
+            stack_time_begin = stack.time_begin,
+            stack_time_end = stack.time_end,
+            stack_anim_time_begin = stack.anim.time_begin,
+            stack_anim_time_end = stack.anim.time_end,
+            layer_count = stack.layers.len(),
+            "FBX animation stack"
+        );
+
+        for (layer_index, layer) in stack.layers.iter().enumerate() {
+            tracing::debug!(
+                index,
+                layer_index,
+                layer_name = %layer.element.name,
+                "FBX animation layer"
+            );
+        }
+    }
+
+    if scene.anim_stacks.is_empty() {
         return Err(Error::NoAnimationStacks);
     }
 
     let stack = match requested_name {
-        Some(name) => stacks
+        Some(name) => scene
+            .anim_stacks
             .iter()
             .find(|stack| stack.element.name == name)
             .ok_or_else(|| Error::AnimationStackNotFound {
                 name: name.to_owned(),
             })?,
-        None => &stacks[0],
+        None => scene
+            .anim_stacks
+            .iter()
+            .find(|stack| stack.time_end > stack.time_begin)
+            .or_else(|| scene.anim_stacks.first())
+            .ok_or(Error::NoAnimationStacks)?,
     };
+
+    #[cfg(feature = "tracing")]
+    tracing::debug!(
+        stack_name = %stack.element.name,
+        stack_time_begin = stack.time_begin,
+        stack_time_end = stack.time_end,
+        stack_anim_time_begin = stack.anim.time_begin,
+        stack_anim_time_end = stack.anim.time_end,
+        scene_anim_time_begin = scene.anim.time_begin,
+        scene_anim_time_end = scene.anim.time_end,
+        "Selected FBX animation"
+    );
 
     Ok(FbxAnimation { stack })
 }
@@ -205,10 +252,11 @@ fn sample_animation(
         "FBX animation range"
     );
 
-    let (time_begin, time_end) = animation_time_range(stack);
+    let mapping = build_bone_mapping(scene, skeleton)?;
+    let nodes: Vec<&ufbx::Node> = mapping.iter().map(|mapping| mapping.node).collect();
+    let (time_begin, time_end) = animation_time_range(stack, &nodes);
 
     let duration = (time_end - time_begin) as f32;
-
     if !duration.is_finite() || duration < 0.0 {
         return Err(Error::InvalidDuration { duration });
     }
@@ -231,19 +279,18 @@ fn sample_animation(
         });
     }
 
-    let mapping = build_bone_mapping(scene, skeleton)?;
     #[cfg(feature = "tracing")]
     tracing::debug!(
         skeleton_bones = skeleton.bones.len(),
         mapped_bones = mapping.len(),
         "FBX bone mapping"
     );
+
     let mut frames = Vec::with_capacity(num_frames as usize);
 
     for frame_index in 0..num_frames {
-        let time = animation.stack.time_begin + frame_index as f64 / fps as f64;
+        let time = (time_begin + frame_index as f64 / fps as f64).min(time_end);
         let transforms = sample_frame(anim, &mapping, skeleton, time);
-
         frames.push(AnimationFrame { transforms });
     }
 
@@ -256,22 +303,51 @@ fn sample_animation(
     })
 }
 
-fn animation_time_range(stack: &ufbx::AnimStack) -> (f64, f64) {
-    let stack_begin = stack.time_begin;
-    let stack_end = stack.time_end;
+/// Returns the actual animation range represented by the animation curves.
+///
+/// FBX animation stacks may have an empty or unset time range even when
+/// animation curves contain valid keyframes. The curve ranges are therefore
+/// used as the authoritative range for sampling.
+///
+/// Falls back to the stack/animation ranges when no animation curve provides
+/// a valid range.
+///
+/// # Errors
+///
+/// This function does not return an error. An empty or invalid curve range
+/// falls back to the ranges supplied by `ufbx`.
+fn animation_time_range(stack: &ufbx::AnimStack, nodes: &[&ufbx::Node]) -> (f64, f64) {
+    let mut time_begin = f64::INFINITY;
+    let mut time_end = f64::NEG_INFINITY;
 
-    if stack_end > stack_begin {
-        return (stack_begin, stack_end);
+    for layer in &stack.layers {
+        for node in nodes {
+            for prop in layer.find_anim_props(&node.element) {
+                for (curve_index, curve) in prop.anim_value.curves.iter().flatten().enumerate() {
+                    time_begin = time_begin.min(curve.min_time);
+                    time_end = time_end.max(curve.max_time);
+
+                    tracing::debug!(
+                        bone = %node.element.name,
+                        prop = %prop.anim_value.element.name,
+                        curve_index,
+                        min_time = curve.min_time,
+                        max_time = curve.max_time,
+                        keyframes = curve.keyframes.len(),
+                        first_time = curve.keyframes.first().map(|key| key.time),
+                        last_time = curve.keyframes.last().map(|key| key.time),
+                        "FBX animation curve"
+                    );
+                }
+            }
+        }
     }
 
-    let anim_begin = stack.anim.time_begin;
-    let anim_end = stack.anim.time_end;
-
-    if anim_end > anim_begin {
-        return (anim_begin, anim_end);
+    if time_begin.is_finite() && time_end.is_finite() && time_end >= time_begin {
+        (time_begin, time_end)
+    } else {
+        (stack.time_begin, stack.time_end)
     }
-
-    (stack_begin, stack_end)
 }
 
 fn sample_frame(

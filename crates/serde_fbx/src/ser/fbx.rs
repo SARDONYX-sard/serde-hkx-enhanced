@@ -11,10 +11,12 @@ use havok_types::{QsTransform, Quaternion, Vector4};
 use serde_spline::hkx::{Animation, Skeleton};
 use ufbx_write::sys;
 
-use super::AnimationInput;
+use super::{AnimationInput, Format};
 use crate::error::Error;
 
 /// Exports a skeleton and sampled animation as a binary FBX file.
+///
+/// - format: output format
 ///
 /// # Errors
 ///
@@ -33,6 +35,7 @@ pub(crate) fn export_fbx(
     skeleton: &Skeleton,
     animation: &AnimationInput,
     fps: f32,
+    format: Format,
 ) -> Result<Vec<u8>, Error> {
     let animation = Animation::from_bytes(skeleton, animation.bytes, animation.path)?;
     validate_animation(skeleton, &animation)?;
@@ -44,7 +47,7 @@ pub(crate) fn export_fbx(
         });
     }
 
-    let result = export_scene(scene, skeleton, &animation, fps);
+    let result = export_scene(scene, skeleton, &animation, fps, format);
     unsafe { sys::ufbxw_free_scene(scene) };
     result
 }
@@ -62,6 +65,7 @@ fn export_scene(
     skeleton: &Skeleton,
     animation: &Animation,
     fps: f32,
+    format: Format,
 ) -> Result<Vec<u8>, Error> {
     set_target_coordinate_axes(scene, fps);
     let nodes = create_skeleton(scene, skeleton)?;
@@ -69,7 +73,7 @@ fn export_scene(
     create_animation(scene, &nodes, animation)?;
     unsafe { sys::ufbxw_prepare_scene(scene, &sys::ufbxw_default_prepare_opts) };
 
-    save_memory(scene)
+    save_memory(scene, format)
 }
 
 /// Creates all skeleton nodes and their hierarchy.
@@ -132,7 +136,7 @@ fn set_node_transform(
 ) -> Result<(), Error> {
     unsafe {
         sys::ufbxw_node_set_translation(scene, node, to_sys_vec3(transform.transition.clone()));
-        sys::ufbxw_node_set_scaling_offset(scene, node, to_sys_vec3(transform.scale.clone()));
+        sys::ufbxw_node_set_scaling(scene, node, to_sys_vec3(transform.scale.clone()));
         sys::ufbxw_node_set_rotation_quat(
             scene,
             node,
@@ -303,10 +307,12 @@ fn create_animation(
 ///
 /// Returns [`Error::ExportFbx`] if the output path cannot be represented as a
 /// C string or if `ufbx_write` reports a save failure.
-fn save_memory(scene: *mut sys::ufbxw_scene) -> Result<Vec<u8>, Error> {
+fn save_memory(scene: *mut sys::ufbxw_scene, format: Format) -> Result<Vec<u8>, Error> {
     let mut opts = unsafe { std::mem::zeroed::<sys::ufbxw_save_opts>() };
-    opts.format = sys::ufbxw_save_format_UFBXW_SAVE_FORMAT_BINARY;
-    // opts.format = sys::ufbxw_save_format_UFBXW_SAVE_FORMAT_ASCII;
+    opts.format = match format {
+        Format::FbxBin => sys::ufbxw_save_format_UFBXW_SAVE_FORMAT_BINARY,
+        Format::FbxAscii => sys::ufbxw_save_format_UFBXW_SAVE_FORMAT_ASCII,
+    };
     opts.version = 7500;
 
     let mut buffer = unsafe { core::mem::zeroed::<sys::ufbxw_write_buffer>() };

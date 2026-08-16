@@ -13,6 +13,12 @@ pub struct AnimationInput<'a> {
     pub path: &'a Path,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum Format {
+    FbxBin,
+    FbxAscii,
+}
+
 /// Converts a skeleton and multiple Havok animations into FBX files.
 ///
 /// Each input animation is exported independently and produces one FBX byte
@@ -27,12 +33,13 @@ pub fn export_fbx(
     skeleton_path: &Path,
     animations: &[AnimationInput<'_>],
     fps: f32,
+    format: Format,
 ) -> Result<Vec<Vec<u8>>, Error> {
     let skeleton = Skeleton::from_bytes(skeleton_bytes, skeleton_path)?;
 
     let (fbx_bytes_list, errors): (Vec<Vec<u8>>, Vec<Error>) =
         animations.par_iter().partition_map(|animation| {
-            match fbx::export_fbx(&skeleton, animation, fps) {
+            match fbx::export_fbx(&skeleton, animation, fps, format) {
                 Ok(fbx) => Either::Left(fbx),
                 Err(error) => Either::Right(error),
             }

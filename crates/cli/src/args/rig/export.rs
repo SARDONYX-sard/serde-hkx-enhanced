@@ -58,6 +58,8 @@ pub enum Format {
 
     #[cfg(feature = "fbx")]
     Fbx,
+    #[cfg(feature = "fbx")]
+    FbxAscii,
 }
 
 impl Format {
@@ -68,7 +70,7 @@ impl Format {
             Self::Kf => "kf",
 
             #[cfg(feature = "fbx")]
-            Self::Fbx => "fbx",
+            Self::Fbx | Self::FbxAscii => "fbx",
         }
     }
 }
@@ -139,10 +141,16 @@ pub fn exportrig(args: &Args) -> Result<(), AnyError> {
         Format::Kf => export_kf(&skeleton_bytes, &args.skeleton, &animations, &output)?,
 
         #[cfg(feature = "fbx")]
-        Format::Fbx => {
+        Format::Fbx | Format::FbxAscii => {
             if !args.fps.is_finite() || args.fps <= 0.0 {
                 return Err(invalid_input("--fps must be a finite value greater than zero").into());
             }
+
+            let format = match args.format {
+                Format::Fbx => serde_fbx::ser::Format::FbxBin,
+                Format::FbxAscii => serde_fbx::ser::Format::FbxAscii,
+                Format::Kf => unreachable!(),
+            };
 
             export_fbx_format(
                 &skeleton_bytes,
@@ -150,6 +158,7 @@ pub fn exportrig(args: &Args) -> Result<(), AnyError> {
                 &animations,
                 &output,
                 args.fps,
+                format,
             )?;
         }
     }
@@ -369,6 +378,7 @@ fn export_fbx_format(
     animations: &[AnimationFile],
     output: &Output,
     fps: f32,
+    format: serde_fbx::ser::Format,
 ) -> Result<(), AnyError> {
     let inputs = animations
         .iter()
@@ -378,7 +388,7 @@ fn export_fbx_format(
         })
         .collect::<Vec<_>>();
 
-    let fbx_bytes = export_fbx(skeleton_bytes, skeleton_path, &inputs, fps)?;
+    let fbx_bytes = export_fbx(skeleton_bytes, skeleton_path, &inputs, fps, format)?;
 
     if fbx_bytes.len() != animations.len() {
         return Err(Box::new(invalid_data(

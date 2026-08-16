@@ -3,16 +3,51 @@
 // Reference:
 // https://github.com/PredatorCZ/HavokLib/blob/master/source/hka_spline_decompressor.hpp
 // https://github.com/PredatorCZ/HavokLib/blob/master/source/hka_spline_decompressor.cpp
+// https://github.com/Grimrukh/soulstruct-havok/blob/e67d5b9642f321dc3060abc91017c352245c7f3d/src/soulstruct/havok/spline_compression.py
 
-//! Encodes Havok spline decompression structures back into binary blocks.
+//! Encodes Havok spline-compressed animation blocks.
+//!
+//! The layout intentionally follows Soulstruct's
+//! `SplineCompressedAnimationData.pack()` implementation.
+//!
+//! A transform block is encoded as:
+//!
+//! ```text
+//! TransformMask[track_count]
+//! align(4)
+//!
+//! for each transform track:
+//!     translation
+//!     align(4)
+//!     rotation
+//!     align(4)
+//!     scale
+//!
+//! align(16)
+//! ```
+//!
+//! Vector spline data is encoded as:
+//!
+//! ```text
+//! u16(control_point_count - 1)
+//! u8(degree)
+//! u8[knot_count]
+//! align(4)
+//! axis metadata
+//! quantized control points
+//! ```
+//!
+//! Rotation spline data uses the same spline header, followed by
+//! quantization-specific alignment and quaternion control points.
 
 use havok_types::Vector4;
 
 use super::{
     SplineDecompressor,
     math::{
-        QuantizationType, QuatA16, SplineTrackQuat, SplineTrackType, SplineTrackVector,
-        TransformMask, TransformSplineBlock, TransformTrack,
+        QuantizationType, QuatA16, SplineDynamicTrackQuat, SplineDynamicTrackVector,
+        SplineTrackQuat, SplineTrackType, SplineTrackVector, TransformMask, TransformSplineBlock,
+        TransformTrack, TransformType,
     },
 };
 use crate::error::Error;
@@ -20,22 +55,45 @@ use crate::error::Error;
 /// Encoded spline animation data.
 #[derive(Clone, Debug)]
 pub struct SplineEncodedData {
-    /// Serialized animation data.
+    /// Serialized spline-compressed animation data.
     pub data: Vec<u8>,
 
-    /// Byte offset of each spline block.
+    /// Byte offset of every encoded spline block.
     pub block_offsets: Vec<u32>,
 }
 
 impl SplineDecompressor {
-    /// Encodes decoded spline blocks into Havok spline-compressed data.
+    /// Encodes all spline blocks into Havok spline-compressed animation data.
     ///
-    /// This does not reproduce the decompressor's original input; it produces
-    /// a valid representation of the decoded values using the current masks.
+    /// The encoding layout follows Soulstruct's
+    /// `SplineCompressedAnimationData.pack()` implementation.
+    ///
+    /// `num_float_tracks` is intentionally not accepted here. This encoder
+    /// handles transform tracks only, and the caller is responsible for
+    /// constructing the corresponding Havok animation object.
     ///
     /// # Errors
-    /// Returns an error when a block cannot be represented by its mask.
-    pub fn encode(&self, num_float_tracks: usize) -> Result<SplineEncodedData, Error> {
+    ///
+    /// Returns [`Error`] if a block has inconsistent mask and track counts,
+    /// contains invalid spline metadata, contains non-finite values, or uses
+    /// an unsupported quaternion quantization format.
+    pub fn encode(&self) -> Result<SplineEncodedData, Error> {
+        if self.blocks.is_empty() {
+            return Err(Error::InvalidData("cannot encode empty spline data"));
+        }
+
+        let transform_track_count = self.blocks[0].tracks.len();
+
+        for block in &self.blocks {
+            if block.masks.len() != transform_track_count
+                || block.tracks.len() != transform_track_count
+            {
+                return Err(Error::InvalidData(
+                    "animation data blocks do not have equal transform track counts",
+                ));
+            }
+        }
+
         let mut data = Vec::new();
         let mut block_offsets = Vec::with_capacity(self.blocks.len());
 
@@ -47,7 +105,7 @@ impl SplineDecompressor {
 
             block_offsets.push(offset);
 
-            encode_block(block, num_float_tracks, &mut data)?;
+            encode_block(block, &mut data)?;
         }
 
         Ok(SplineEncodedData {
@@ -57,12 +115,15 @@ impl SplineDecompressor {
     }
 }
 
-/// Encodes one transform spline block.
-fn encode_block(
-    block: &TransformSplineBlock,
-    num_float_tracks: usize,
-    out: &mut Vec<u8>,
-) -> Result<(), Error> {
+/// Encodes one spline-compressed animation block.
+///
+/// The order exactly follows Soulstruct's block packing order:
+///
+/// 1. Transform headers.
+/// 2. Four-byte alignment.
+/// 3. Translation, rotation, and scale for every transform track.
+/// 4. Sixteen-byte block alignment.
+fn encode_block(block: &TransformSplineBlock, out: &mut Vec<u8>) -> Result<(), Error> {
     if block.masks.len() != block.tracks.len() {
         return Err(Error::InvalidData("mask count does not match track count"));
     }
@@ -70,15 +131,6 @@ fn encode_block(
     for mask in &block.masks {
         write_transform_mask(*mask, out);
     }
-
-    // The Havok decoder skips the float-track region immediately after
-    // the transform masks and then aligns to four bytes.
-    out.resize(
-        out.len()
-            .checked_add(num_float_tracks)
-            .ok_or(Error::InvalidData("encoded spline data is too large"))?,
-        0,
-    );
 
     align4(out);
 
@@ -92,10 +144,13 @@ fn encode_block(
         encode_scale(mask, track, out)?;
     }
 
+    align16(out);
+
     Ok(())
 }
 
-/// Writes one packed transform mask.
+/// Writes one four-byte Havok transform mask.
+#[inline]
 fn write_transform_mask(mask: TransformMask, out: &mut Vec<u8>) {
     out.push(mask.quantization_types);
     out.push(mask.position_types);
@@ -113,9 +168,12 @@ fn encode_position(
 
     encode_vector_track(
         mask,
-        track,
         &track.position,
-        TransformKind::Position,
+        [
+            TransformType::PosX,
+            TransformType::PosY,
+            TransformType::PosZ,
+        ],
         quantization,
         0.0,
         out,
@@ -132,68 +190,42 @@ fn encode_scale(
 
     encode_vector_track(
         mask,
-        track,
         &track.scale,
-        TransformKind::Scale,
+        [
+            TransformType::ScaleX,
+            TransformType::ScaleY,
+            TransformType::ScaleZ,
+        ],
         quantization,
         1.0,
         out,
     )
 }
 
-#[derive(Clone, Copy)]
-enum TransformKind {
-    Position,
-    Scale,
-}
-
-impl TransformKind {
-    #[inline]
-    const fn transform_types(self) -> [super::math::TransformType; 3] {
-        use super::math::TransformType;
-
-        match self {
-            Self::Position => [
-                TransformType::PosX,
-                TransformType::PosY,
-                TransformType::PosZ,
-            ],
-            Self::Scale => [
-                TransformType::ScaleX,
-                TransformType::ScaleY,
-                TransformType::ScaleZ,
-            ],
-        }
-    }
-}
-
-/// Encodes a position or scale vector track.
+/// Encodes one position or scale vector.
 fn encode_vector_track(
     mask: &TransformMask,
-    _track: &TransformTrack,
     source: &SplineTrackVector,
-    kind: TransformKind,
+    types: [TransformType; 3],
     quantization: QuantizationType,
     default: f32,
     out: &mut Vec<u8>,
 ) -> Result<(), Error> {
-    let types = kind.transform_types();
-
     let dynamic = types
         .iter()
-        .any(|ty| mask.sub_track_type(*ty) == SplineTrackType::Dynamic);
+        .any(|&ty| mask.sub_track_type(ty) == SplineTrackType::Dynamic);
 
     match source {
         SplineTrackVector::Static(track) => {
             if dynamic {
                 return Err(Error::InvalidData(
-                    "vector track is static while its mask is dynamic",
+                    "vector track is static while its mask contains a dynamic axis",
                 ));
             }
 
             encode_static_vector(
                 mask,
-                &types,
+                types,
                 vector4_to_f32_array(&track.value),
                 default,
                 out,
@@ -203,116 +235,137 @@ fn encode_vector_track(
         SplineTrackVector::Dynamic(track) => {
             if !dynamic {
                 return Err(Error::InvalidData(
-                    "vector track is dynamic while its mask is not dynamic",
+                    "vector track is dynamic while its mask contains no dynamic axis",
                 ));
             }
 
-            encode_dynamic_vector(mask, &types, track, quantization, default, out)
+            encode_dynamic_vector(mask, types, track, quantization, default, out)
         }
     }
 }
 
+/// Converts the three relevant components of a Havok vector.
 #[inline]
 const fn vector4_to_f32_array(value: &Vector4) -> [f32; 3] {
     [value.x, value.y, value.z]
 }
 
-/// Encodes a static vector track.
+/// Encodes a vector which contains only static and identity axes.
 fn encode_static_vector(
     mask: &TransformMask,
-    types: &[super::math::TransformType; 3],
-    value: [f32; 3],
+    types: [TransformType; 3],
+    values: [f32; 3],
     default: f32,
     out: &mut Vec<u8>,
 ) -> Result<(), Error> {
     for axis in 0..3 {
-        #[expect(
-            clippy::float_cmp,
-            reason = "Identity tracks must contain the exact default value."
-        )]
-        if mask.sub_track_type(types[axis]) == SplineTrackType::Static {
-            let value = value[axis];
+        match mask.sub_track_type(types[axis]) {
+            SplineTrackType::Static => {
+                let value = values[axis];
 
-            if !value.is_finite() {
-                return Err(Error::InvalidData(
-                    "static vector contains a non-finite value",
-                ));
+                if !value.is_finite() {
+                    return Err(Error::InvalidData(
+                        "static vector contains a non-finite value",
+                    ));
+                }
+
+                out.extend_from_slice(&value.to_le_bytes());
             }
 
-            out.extend_from_slice(&value.to_le_bytes());
-        } else if mask.sub_track_type(types[axis]) == SplineTrackType::Identity
-            && value[axis] != default
-        {
-            return Err(Error::InvalidData(
-                "identity vector component differs from its default value",
-            ));
+            SplineTrackType::Identity =>
+            {
+                #[expect(
+                    clippy::float_cmp,
+                    reason = "Identity tracks must contain the exact Havok default value."
+                )]
+                if values[axis] != default {
+                    return Err(Error::InvalidData(
+                        "identity vector component differs from its default value",
+                    ));
+                }
+            }
+
+            SplineTrackType::Dynamic => {
+                return Err(Error::InvalidData(
+                    "static vector contains a dynamic mask component",
+                ));
+            }
         }
     }
 
     Ok(())
 }
 
-fn encode_knots(knots: &[f32], out: &mut Vec<u8>) -> Result<(), Error> {
-    for &knot in knots {
-        if !knot.is_finite() || knot < 0.0 || knot > u8::MAX as f32 || knot.fract() != 0.0 {
-            return Err(Error::InvalidData(
-                "spline knot cannot be represented as u8",
-            ));
-        }
-
-        out.push(knot as u8);
-    }
-
-    Ok(())
-}
-
-/// Encodes a dynamic vector track.
+/// Encodes a dynamic vector spline.
+///
+/// The three axes share one spline header. Only axes whose mask says Dynamic
+/// have bounds and quantized control points. Static axes contain one f32 and
+/// identity axes contain no payload.
 fn encode_dynamic_vector(
     mask: &TransformMask,
-    types: &[super::math::TransformType; 3],
-    track: &super::math::SplineDynamicTrackVector,
+    types: [TransformType; 3],
+    track: &SplineDynamicTrackVector,
     quantization: QuantizationType,
     default: f32,
     out: &mut Vec<u8>,
 ) -> Result<(), Error> {
-    let control_point_count = track
-        .tracks
+    let control_point_count = types
         .iter()
-        .filter(|values| values.len() > 1)
-        .map(Vec::len)
-        .max()
-        .unwrap_or(0);
+        .enumerate()
+        .find_map(|(axis, &ty)| {
+            (mask.sub_track_type(ty) == SplineTrackType::Dynamic)
+                .then_some(track.tracks[axis].len())
+        })
+        .ok_or(Error::InvalidData(
+            "dynamic vector contains no dynamic axis",
+        ))?;
 
     if control_point_count == 0 {
         return Err(Error::InvalidData(
-            "dynamic vector track contains no control points",
+            "dynamic vector contains no control points",
         ));
+    }
+
+    #[expect(clippy::needless_range_loop)]
+    for axis in 0..3 {
+        if mask.sub_track_type(types[axis]) == SplineTrackType::Dynamic
+            && track.tracks[axis].len() != control_point_count
+        {
+            return Err(Error::InvalidData(
+                "dynamic vector axes have different control point counts",
+            ));
+        }
     }
 
     let num_items = control_point_count
         .checked_sub(1)
         .ok_or(Error::InvalidData("invalid vector control point count"))?;
 
-    let num_items_u16 = u16::try_from(num_items)
+    let num_items = u16::try_from(num_items)
         .map_err(|_| Error::InvalidData("too many vector spline control points"))?;
 
     let degree = track.degree;
 
-    out.extend_from_slice(&num_items_u16.to_le_bytes());
-    out.push(degree);
+    if degree == 0 {
+        return Err(Error::InvalidData("spline degree must not be zero"));
+    }
 
-    let expected_knots = num_items
+    let expected_knot_count = control_point_count
         .checked_add(degree as usize)
-        .and_then(|value| value.checked_add(2))
+        .and_then(|count| count.checked_add(1))
         .ok_or(Error::InvalidData("invalid vector knot count"))?;
 
-    if track.knots.len() != expected_knots {
+    if track.knots.len() != expected_knot_count {
         return Err(Error::InvalidData(
-            "vector knot count does not match num_items and degree",
+            "vector knot count does not match control point count and degree",
         ));
     }
 
+    out.extend_from_slice(&num_items.to_le_bytes());
+    out.push(degree);
+
     encode_knots(&track.knots, out)?;
+
     align4(out);
 
     let mut bounds = [[0.0f32; 2]; 3];
@@ -321,12 +374,6 @@ fn encode_dynamic_vector(
         match mask.sub_track_type(types[axis]) {
             SplineTrackType::Dynamic => {
                 let values = &track.tracks[axis];
-
-                if values.len() != control_point_count {
-                    return Err(Error::InvalidData(
-                        "dynamic vector axes have different control point counts",
-                    ));
-                }
 
                 let min = values
                     .iter()
@@ -374,48 +421,48 @@ fn encode_dynamic_vector(
 
             SplineTrackType::Identity => {
                 let values = &track.tracks[axis];
+
                 #[expect(
                     clippy::float_cmp,
-                    reason = "Identity tracks must contain the exact default value."
+                    reason = "Identity tracks must contain the exact Havok default value."
                 )]
-                if !values.is_empty() && values.iter().any(|value| *value != default) {
+                if values.iter().any(|&value| value != default) {
                     return Err(Error::InvalidData(
-                        "identity vector component has a non-default value",
+                        "identity vector component differs from its default value",
                     ));
                 }
             }
         }
     }
 
-    for item in 0..control_point_count {
+    for control_point in 0..control_point_count {
         for axis in 0..3 {
             if mask.sub_track_type(types[axis]) != SplineTrackType::Dynamic {
                 continue;
             }
 
-            let value = track.tracks[axis]
-                .get(item)
-                .copied()
-                .ok_or(Error::InvalidData(
-                    "vector control point index is out of bounds",
-                ))?;
+            let value =
+                track.tracks[axis]
+                    .get(control_point)
+                    .copied()
+                    .ok_or(Error::InvalidData(
+                        "vector control point index is out of bounds",
+                    ))?;
 
-            let min = bounds[axis][0];
-            let max = bounds[axis][1];
+            let [min, max] = bounds[axis];
 
             write_quantized_scalar(out, value, min, max, quantization)?;
         }
     }
 
-    align4(out);
-
     Ok(())
 }
 
-/// Writes one quantized scalar.
+/// Writes one scalar quantized according to Havok's scalar track format.
 ///
-/// Havok's 16-bit vector representation advances by four bytes per scalar:
-/// two bytes contain the value and two bytes are padding.
+/// `Bit8` stores one byte and `Bit16` stores two bytes. There is no per-value
+/// four-byte padding; the surrounding vector payload is aligned after all
+/// control points have been written.
 fn write_quantized_scalar(
     out: &mut Vec<u8>,
     value: f32,
@@ -429,7 +476,14 @@ fn write_quantized_scalar(
 
     let range = max - min;
 
-    let normalized = if range.abs() <= f32::EPSILON {
+    let normalized = if range == 0.0 {
+        #[expect(clippy::float_cmp)]
+        if value != min {
+            return Err(Error::InvalidData(
+                "quantization bounds are equal but the value differs",
+            ));
+        }
+
         0.0
     } else {
         ((value - min) / range).clamp(0.0, 1.0)
@@ -455,18 +509,22 @@ fn write_quantized_scalar(
 }
 
 /// Encodes the rotation track.
+///
+/// Soulstruct's encoder only creates new quaternion data for
+/// `ThreeComp40`. Other quaternion quantization formats require the original
+/// raw bytes for a byte-preserving re-pack. The current Rust representation
+/// stores decoded quaternions only, so those formats are rejected.
 fn encode_rotation(
     mask: &TransformMask,
     track: &TransformTrack,
     out: &mut Vec<u8>,
 ) -> Result<(), Error> {
     let quantization = mask.rotation_quantization_type()?;
+    let kind = mask.sub_track_type(TransformType::Rotation);
 
     match &track.rotation {
         SplineTrackQuat::Identity => {
-            if mask.sub_track_type(super::math::TransformType::Rotation)
-                != SplineTrackType::Identity
-            {
+            if kind != SplineTrackType::Identity {
                 return Err(Error::InvalidData(
                     "rotation track is identity while its mask is not identity",
                 ));
@@ -476,20 +534,23 @@ fn encode_rotation(
         }
 
         SplineTrackQuat::Static(static_track) => {
-            if mask.sub_track_type(super::math::TransformType::Rotation) != SplineTrackType::Static
-            {
+            if kind != SplineTrackType::Static {
                 return Err(Error::InvalidData(
                     "rotation track is static while its mask is not static",
                 ));
             }
 
-            align_rotation(out, quantization)?;
+            if quantization != QuantizationType::Bit40 {
+                return Err(Error::InvalidData(
+                    "static quaternion requires raw data for unsupported quantization",
+                ));
+            }
+
             write_quaternion(out, static_track.value, quantization)
         }
 
         SplineTrackQuat::Dynamic(dynamic_track) => {
-            if mask.sub_track_type(super::math::TransformType::Rotation) != SplineTrackType::Dynamic
-            {
+            if kind != SplineTrackType::Dynamic {
                 return Err(Error::InvalidData(
                     "rotation track is dynamic while its mask is not dynamic",
                 ));
@@ -502,7 +563,7 @@ fn encode_rotation(
 
 /// Encodes a dynamic quaternion spline.
 fn encode_dynamic_rotation(
-    track: &super::math::SplineDynamicTrackQuat,
+    track: &SplineDynamicTrackQuat,
     quantization: QuantizationType,
     out: &mut Vec<u8>,
 ) -> Result<(), Error> {
@@ -512,26 +573,44 @@ fn encode_dynamic_rotation(
         ));
     }
 
-    let num_items = track.track.len() - 1;
-    let num_items_u16 = u16::try_from(num_items)
-        .map_err(|_| Error::InvalidData("too many quaternion spline control points"))?;
-
-    let expected_knots = num_items
-        .checked_add(track.degree as usize)
-        .and_then(|value| value.checked_add(2))
-        .ok_or(Error::InvalidData("invalid quaternion knot count"))?;
-
-    if track.knots.len() != expected_knots {
+    if quantization != QuantizationType::Bit40 {
         return Err(Error::InvalidData(
-            "quaternion knot count does not match num_items and degree",
+            "dynamic quaternion requires raw data for unsupported quantization",
         ));
     }
 
-    out.extend_from_slice(&num_items_u16.to_le_bytes());
-    out.push(track.degree);
+    let control_point_count = track.track.len();
+
+    let num_items = control_point_count
+        .checked_sub(1)
+        .ok_or(Error::InvalidData("invalid quaternion control point count"))?;
+
+    let num_items = u16::try_from(num_items)
+        .map_err(|_| Error::InvalidData("too many quaternion spline control points"))?;
+
+    let degree = track.degree;
+
+    if degree == 0 {
+        return Err(Error::InvalidData("spline degree must not be zero"));
+    }
+
+    let expected_knot_count = control_point_count
+        .checked_add(degree as usize)
+        .and_then(|count| count.checked_add(1))
+        .ok_or(Error::InvalidData("invalid quaternion knot count"))?;
+
+    if track.knots.len() != expected_knot_count {
+        return Err(Error::InvalidData(
+            "quaternion knot count does not match control point count and degree",
+        ));
+    }
+
+    out.extend_from_slice(&num_items.to_le_bytes());
+    out.push(degree);
+
     encode_knots(&track.knots, out)?;
 
-    align_rotation(out, quantization)?;
+    align_rotation(out, quantization);
 
     for quaternion in &track.track {
         write_quaternion(out, *quaternion, quantization)?;
@@ -540,94 +619,125 @@ fn encode_dynamic_rotation(
     Ok(())
 }
 
-/// Aligns the rotation payload exactly as the Havok decoder does.
-fn align_rotation(out: &mut Vec<u8>, quantization: QuantizationType) -> Result<(), Error> {
-    let alignment = match quantization {
-        QuantizationType::Bit48 | QuantizationType::Bit16Quat => 2,
-        QuantizationType::Bit32 | QuantizationType::Uncompressed => 4,
-        // QuantizationType::Bit40 => 1,
-        // QuantizationType::Bit24 => 1,
-        _ => 1,
-    };
+/// Encodes a spline knot vector.
+///
+/// Havok stores spline knots as unsigned bytes.
+fn encode_knots(knots: &[f32], out: &mut Vec<u8>) -> Result<(), Error> {
+    for &knot in knots {
+        if !knot.is_finite() || knot < 0.0 || knot > u8::MAX as f32 || knot.fract() != 0.0 {
+            return Err(Error::InvalidData(
+                "spline knot cannot be represented as u8",
+            ));
+        }
 
-    align_to(out, alignment);
+        out.push(knot as u8);
+    }
 
     Ok(())
 }
 
-/// Writes one quaternion in the selected Havok representation.
+/// Aligns a quaternion payload according to its quantization format.
+///
+/// These values match Soulstruct's `get_rotation_align()`:
+///
+/// - Polar32: 4
+/// - ThreeComp40: 1
+/// - ThreeComp48: 2
+/// - ThreeComp25: 1
+/// - Straight16: 2
+/// - Uncompressed: 4
+fn align_rotation(out: &mut Vec<u8>, quantization: QuantizationType) {
+    let alignment = match quantization {
+        QuantizationType::Bit8
+        | QuantizationType::Bit16
+        | QuantizationType::Bit24
+        | QuantizationType::Bit40 => 1,
+
+        QuantizationType::Bit48 | QuantizationType::Bit16Quat => 2,
+        QuantizationType::Bit32 | QuantizationType::Uncompressed => 4,
+    };
+
+    align_to(out, alignment);
+}
+
+/// Writes one quaternion using the supported Havok encoding.
+///
+/// New quaternion encoding intentionally follows Soulstruct and only emits
+/// THREECOMP40. Other formats require raw source bytes to reproduce the
+/// original representation.
 fn write_quaternion(
     out: &mut Vec<u8>,
     quaternion: QuatA16,
     quantization: QuantizationType,
 ) -> Result<(), Error> {
-    let [x, y, z, w] = quaternion.to_array();
-
-    if !x.is_finite() || !y.is_finite() || !z.is_finite() || !w.is_finite() {
-        return Err(Error::InvalidData("quaternion contains a non-finite value"));
-    }
-
     match quantization {
-        QuantizationType::Bit32 => write_quat_polar32(out, quaternion),
-        QuantizationType::Bit40 => write_quat_three_comp40(out, quaternion),
-        QuantizationType::Bit48 => write_quat_three_comp48(out, quaternion),
-
-        QuantizationType::Uncompressed => {
-            out.extend_from_slice(&x.to_le_bytes());
-            out.extend_from_slice(&y.to_le_bytes());
-            out.extend_from_slice(&z.to_le_bytes());
-            out.extend_from_slice(&w.to_le_bytes());
+        QuantizationType::Bit40 => {
+            write_quat_three_comp40(out, quaternion)?;
             Ok(())
         }
-
-        QuantizationType::Bit24 | QuantizationType::Bit16Quat => Err(Error::InvalidData(
-            "quaternion encoding is not implemented for this quantization type",
-        )),
-
-        QuantizationType::Bit8 | QuantizationType::Bit16 => Err(Error::InvalidData(
-            "scalar quantization type cannot encode a quaternion",
+        _ => Err(Error::InvalidData(
+            "quaternion quantization requires unsupported raw encoding",
         )),
     }
 }
 
-/// Encodes Havok THREECOMP40 quaternion data.
+/// Writes a Havok THREECOMP40 quaternion.
+///
+/// The format stores three 12-bit values, a two-bit omitted-component index,
+/// and one sign bit in a 40-bit integer.
+///
+/// The constants match the corresponding decoded representation in this
+/// crate and Soulstruct's THREECOMP40 format.
 fn write_quat_three_comp40(out: &mut Vec<u8>, quaternion: QuatA16) -> Result<(), Error> {
-    const MASK: u64 = (1 << 11) - 1;
-    const BIAS: i32 = 1023;
-    const FRACTAL: f32 = 0.000_345_436;
+    const MASK: u64 = (1 << 12) - 1;
+    const START: f32 = -core::f32::consts::FRAC_1_SQRT_2;
+    const STEP: f32 = core::f32::consts::SQRT_2 / 4094.0;
 
-    let [x, y, z, w] = quaternion.normalize().to_array();
-    let components = [x, y, z, w];
+    let quat = quaternion.to_array();
 
-    let (result_shift, result_sign) = largest_component(&components);
+    if quat.iter().any(|value| !value.is_finite()) {
+        return Err(Error::InvalidData("quaternion contains a non-finite value"));
+    }
 
-    let sign = if result_sign { -1.0 } else { 1.0 };
+    let mut implicit_dimension = 0usize;
+    let mut max_abs = quat[0].abs();
+
+    for (index, &value) in quat.iter().enumerate().skip(1) {
+        let abs = value.abs();
+
+        if abs > max_abs {
+            max_abs = abs;
+            implicit_dimension = index;
+        }
+    }
+
+    let implicit_negative = quat[implicit_dimension] < 0.0;
 
     let mut encoded = [0u64; 3];
-    let mut index = 0;
+    let mut encoded_index = 0;
 
-    for component in components {
-        if index == result_shift {
+    for (index, &value) in quat.iter().enumerate() {
+        if index == implicit_dimension {
             continue;
         }
 
-        let value = (component * sign / FRACTAL).round() as i32 + BIAS;
+        let value = ((value - START) / STEP).round();
 
-        if !(0..=MASK as i32).contains(&value) {
+        if !(0.0..=4095.0).contains(&value) {
             return Err(Error::InvalidData(
-                "quaternion component is outside THREECOMP40 range",
+                "quaternion component cannot be represented by THREECOMP40",
             ));
         }
 
-        encoded[index] = value as u64;
-        index += 1;
+        encoded[encoded_index] = value as u64;
+        encoded_index += 1;
     }
 
-    let packed = encoded[0]
-        | (encoded[1] << 11)
-        | (encoded[2] << 22)
-        | ((result_shift as u64) << 33)
-        | ((result_sign as u64) << 35);
+    let packed = (encoded[0] & MASK)
+        | ((encoded[1] & MASK) << 12)
+        | ((encoded[2] & MASK) << 24)
+        | ((implicit_dimension as u64) << 36)
+        | ((implicit_negative as u64) << 38);
 
     let bytes = packed.to_le_bytes();
 
@@ -636,133 +746,14 @@ fn write_quat_three_comp40(out: &mut Vec<u8>, quaternion: QuatA16) -> Result<(),
     Ok(())
 }
 
-/// Encodes Havok THREECOMP48 quaternion data.
-fn write_quat_three_comp48(out: &mut Vec<u8>, quaternion: QuatA16) -> Result<(), Error> {
-    const MASK: i32 = (1 << 15) - 1;
-    const BIAS: i32 = MASK >> 1;
-    const FRACTAL: f32 = 0.000_043_161;
-
-    let [x, y, z, w] = quaternion.normalize().to_array();
-    let components = [x, y, z, w];
-
-    let (result_shift, result_sign) = largest_component(&components);
-
-    let sign = if result_sign { -1.0 } else { 1.0 };
-
-    let mut values = [0i16; 3];
-    let mut index = 0;
-
-    for component in components {
-        if index == result_shift {
-            continue;
-        }
-
-        let value = (component * sign / FRACTAL).round() as i32 + BIAS;
-
-        if !(0..=MASK).contains(&value) {
-            return Err(Error::InvalidData(
-                "quaternion component is outside THREECOMP48 range",
-            ));
-        }
-
-        values[index] = value as i16;
-        index += 1;
-    }
-
-    let mut x = values[0] as u16;
-    let mut y = values[1] as u16;
-    let z = values[2] as u16;
-
-    x |= ((result_shift & 1) as u16) << 15;
-    y |= (((result_shift >> 1) & 1) as u16) << 14;
-
-    let z = if result_sign { z | 0x8000 } else { z };
-
-    out.extend_from_slice(&x.to_le_bytes());
-    out.extend_from_slice(&y.to_le_bytes());
-    out.extend_from_slice(&z.to_le_bytes());
-
-    Ok(())
-}
-
-/// Encodes Havok POLAR32 quaternion data.
-///
-/// The representation follows the decoder's inverse mapping.
-fn write_quat_polar32(out: &mut Vec<u8>, quaternion: QuatA16) -> Result<(), Error> {
-    use core::f32::consts::{FRAC_PI_2, FRAC_PI_4};
-
-    const R_MASK: u32 = (1 << 10) - 1;
-
-    let [x, y, z, w] = quaternion.normalize().to_array();
-
-    let sign_x = x < 0.0;
-    let sign_y = y < 0.0;
-    let sign_z = z < 0.0;
-    let sign_w = w < 0.0;
-
-    let ax = x.abs();
-    let ay = y.abs();
-    let az = z.abs();
-    let aw = w.abs();
-
-    let radial = (ax.mul_add(ax, ay.mul_add(ay, az * az))).sqrt();
-
-    let phi = radial.atan2(aw);
-
-    let phi_index = (phi * 511.0 / FRAC_PI_2).round().clamp(0.0, 511.0);
-
-    let phi = phi_index;
-
-    let theta = if radial > f32::EPSILON {
-        ay.atan2(ax)
-    } else {
-        0.0
-    };
-
-    let phi_theta = if phi > 0.0 {
-        (theta * phi / FRAC_PI_4 + phi * phi)
-            .round()
-            .clamp(0.0, 262143.0)
-    } else {
-        0.0
-    };
-
-    let r = aw.mul_add(-aw, 1.0).max(0.0).sqrt();
-
-    let r_quantized = (r * R_MASK as f32).round().clamp(0.0, R_MASK as f32) as u32;
-
-    let packed = phi_theta as u32
-        | (r_quantized << 18)
-        | if sign_x { 0x1000_0000 } else { 0 }
-        | if sign_y { 0x2000_0000 } else { 0 }
-        | if sign_z { 0x4000_0000 } else { 0 }
-        | if sign_w { 0x8000_0000 } else { 0 };
-
-    out.extend_from_slice(&packed.to_le_bytes());
-
-    Ok(())
-}
-
-/// Returns the omitted quaternion component and whether it was negative.
-fn largest_component(components: &[f32; 4]) -> (usize, bool) {
-    let mut index = 0;
-    let mut magnitude = components[0].abs();
-
-    for (candidate, component) in components.iter().enumerate().skip(1) {
-        let candidate_magnitude = component.abs();
-
-        if candidate_magnitude > magnitude {
-            index = candidate;
-            magnitude = candidate_magnitude;
-        }
-    }
-
-    (index, components[index] < 0.0)
-}
-
 #[inline]
 fn align4(out: &mut Vec<u8>) {
     align_to(out, 4);
+}
+
+#[inline]
+fn align16(out: &mut Vec<u8>) {
+    align_to(out, 16);
 }
 
 #[inline]
@@ -774,6 +765,6 @@ fn align_to(out: &mut Vec<u8>, alignment: usize) {
     let remainder = out.len() % alignment;
 
     if remainder != 0 {
-        out.resize(out.len() + (alignment - remainder), 0);
+        out.resize(out.len() + alignment - remainder, 0);
     }
 }

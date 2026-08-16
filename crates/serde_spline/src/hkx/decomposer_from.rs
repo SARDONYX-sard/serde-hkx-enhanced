@@ -1,137 +1,172 @@
+use crate::error::Error;
 use crate::spline::SplineDecompressor;
 use crate::spline::math::{
-    QuatA16, SplineDynamicTrackQuat, SplineDynamicTrackVector, SplineStaticTrack, SplineTrackQuat,
-    SplineTrackType, SplineTrackVector, TransformMask, TransformSplineBlock, TransformTrack,
-    TransformType,
+    QuantizationType, QuatA16, SplineDynamicTrackQuat, SplineDynamicTrackVector, SplineStaticTrack,
+    SplineTrackQuat, SplineTrackType, SplineTrackVector, TransformMask, TransformSplineBlock,
+    TransformTrack, TransformType,
 };
-use havok_types::Vector4;
 
-use super::ser::RawTransformTrack;
 use super::{Animation, Skeleton};
-use crate::error::Error;
+
+const MAX_FRAMES_PER_BLOCK: usize = 256;
+const SPLINE_DEGREE: u8 = 1;
 
 impl SplineDecompressor {
-    /// Builds fully-evaluable spline blocks directly from an `Animation` and
-    /// its `Skeleton`.
+    /// Builds spline-compressed animation blocks from sampled animation frames.
+    ///
+    /// The generated representation mirrors Soulstruct's
+    /// `SplineCompressedAnimationData.pack()` input model:
+    ///
+    /// - identity components are omitted;
+    /// - constant components are stored as static values;
+    /// - varying components are stored as degree-1 spline control points;
+    /// - each block contains at most 256 frames.
     ///
     /// # Errors
-    /// - If `animation.frames.len()` doesn't match `animation.num_frames`
-    /// - If any frame's transform count doesn't match `skeleton.bones.len()`, or if the animation has zero frames or the skeleton has zero bones.
+    ///
+    /// Returns [`Error::EmptyAnimation`] if the animation has no frames or the
+    /// skeleton has no bones.
+    ///
+    /// Returns [`Error::FrameCountMismatch`] if `animation.num_frames` does not
+    /// match the number of decoded frames.
+    ///
+    /// Returns [`Error::TransformCountMismatch`] if a frame does not contain
+    /// one transform for every skeleton bone.
     pub(crate) fn from_animation(
         skeleton: &Skeleton,
         animation: &Animation,
     ) -> Result<Self, Error> {
-        let num_tracks = skeleton.bones.len();
-        let num_frames = animation.num_frames as usize;
+        let bone_count = skeleton.bones.len();
+        let frame_count = animation.num_frames as usize;
 
-        if num_frames == 0 || num_tracks == 0 {
+        if frame_count == 0 || bone_count == 0 {
             return Err(Error::EmptyAnimation);
         }
 
-        if animation.frames.len() != num_frames {
+        if animation.frames.len() != frame_count {
             return Err(Error::FrameCountMismatch {
-                expected: num_frames,
+                expected: frame_count,
                 actual: animation.frames.len(),
             });
         }
 
-        // Transpose frame-major storage (`frames[frame].transforms[track]`)
-        // into track-major raw samples, one entry per bone.
-        let mut raw_tracks: Vec<RawTransformTrack> = (0..num_tracks)
-            .map(|_| RawTransformTrack {
-                position: core::array::from_fn(|_| Vec::with_capacity(num_frames)),
-                rotation: Vec::with_capacity(num_frames),
-                scale: core::array::from_fn(|_| Vec::with_capacity(num_frames)),
-            })
-            .collect();
+        let mut blocks = Vec::with_capacity(frame_count.div_ceil(MAX_FRAMES_PER_BLOCK));
 
-        for (frame_index, frame) in animation.frames.iter().enumerate() {
-            if frame.transforms.len() != num_tracks {
-                return Err(Error::TransformCountMismatch {
-                    frame_index,
-                    expected: num_tracks,
-                    actual: frame.transforms.len(),
+        for block_start in (0..frame_count).step_by(MAX_FRAMES_PER_BLOCK) {
+            let block_end = (block_start + MAX_FRAMES_PER_BLOCK).min(frame_count);
+            let block_frame_count = block_end - block_start;
+
+            let mut raw_tracks =
+                vec![RawTransformTrack::with_capacity(block_frame_count); bone_count];
+
+            for (frame_index, frame) in animation.frames[block_start..block_end].iter().enumerate()
+            {
+                let absolute_frame_index = block_start + frame_index;
+
+                if frame.transforms.len() != bone_count {
+                    return Err(Error::TransformCountMismatch {
+                        frame_index: absolute_frame_index,
+                        expected: bone_count,
+                        actual: frame.transforms.len(),
+                    });
+                }
+
+                for (track, transform) in raw_tracks.iter_mut().zip(&frame.transforms) {
+                    track.position[0].push(transform.transition.x);
+                    track.position[1].push(transform.transition.y);
+                    track.position[2].push(transform.transition.z);
+
+                    track.rotation.push([
+                        transform.quaternion.x,
+                        transform.quaternion.y,
+                        transform.quaternion.z,
+                        transform.quaternion.scaler,
+                    ]);
+
+                    track.scale[0].push(transform.scale.x);
+                    track.scale[1].push(transform.scale.y);
+                    track.scale[2].push(transform.scale.z);
+                }
+            }
+
+            let mut masks = Vec::with_capacity(bone_count);
+            let mut tracks = Vec::with_capacity(bone_count);
+
+            for raw in &raw_tracks {
+                let (position, position_types) =
+                    build_vector_track(&raw.position, 0.0, block_frame_count);
+
+                let (rotation, rotation_type) =
+                    build_rotation_track(&raw.rotation, block_frame_count);
+
+                let (scale, scale_types) = build_vector_track(&raw.scale, 1.0, block_frame_count);
+
+                let mask = build_mask(position_types, rotation_type, scale_types);
+
+                masks.push(mask);
+                tracks.push(TransformTrack {
+                    position,
+                    rotation,
+                    scale,
                 });
             }
 
-            for (track, transform) in raw_tracks.iter_mut().zip(&frame.transforms) {
-                track.position[0].push(transform.transition.x);
-                track.position[1].push(transform.transition.y);
-                track.position[2].push(transform.transition.z);
-
-                track.rotation.push([
-                    transform.quaternion.x,
-                    transform.quaternion.y,
-                    transform.quaternion.z,
-                    transform.quaternion.scaler,
-                ]);
-
-                track.scale[0].push(transform.scale.x);
-                track.scale[1].push(transform.scale.y);
-                track.scale[2].push(transform.scale.z);
-            }
+            blocks.push(TransformSplineBlock { masks, tracks });
         }
 
-        // Classify every bone's components and build the evaluable spline data
-        // (masks + tracks) in one pass.
-        let mut masks = Vec::with_capacity(num_tracks);
-        let mut tracks = Vec::with_capacity(num_tracks);
-
-        for raw in &raw_tracks {
-            let (position, position_kinds) = build_vector_track(&raw.position, 0.0, num_frames);
-            let (rotation, rotation_kind) = build_rotation_track(&raw.rotation, num_frames);
-            let (scale, scale_kinds) = build_vector_track(&raw.scale, 1.0, num_frames);
-
-            masks.push(build_mask(position_kinds, rotation_kind, scale_kinds));
-            tracks.push(TransformTrack {
-                position,
-                rotation,
-                scale,
-            });
-        }
-
-        Ok(Self {
-            blocks: vec![TransformSplineBlock { masks, tracks }],
-        })
+        Ok(Self { blocks })
     }
 }
 
-/// Classifies one axis as Identity / Static / Dynamic and builds the
-/// corresponding evaluable `SplineTrackVector` for a full [X, Y, Z] triple.
+/// Raw, per-frame samples for a single transform track.
 ///
-/// Mirrors `read_vector_track`'s "any axis dynamic → whole triple stored as
-/// `Dynamic`" rule: `SplineDynamicTrackVector` can hold mixed-length axes
-/// (length 1 for a static/identity axis, `num_frames` for a dynamic one), so
-/// there's no need to force every axis dynamic just because one of them is.
+/// The animation is stored frame-major, while spline construction operates
+/// on one transform track at a time. This structure therefore contains the
+/// transposed position, rotation, and scale samples for one track.
+#[derive(Clone, Debug)]
+struct RawTransformTrack {
+    /// X, Y, and Z position samples.
+    position: [Vec<f32>; 3],
+
+    /// Quaternion samples in `[x, y, z, w]` order.
+    rotation: Vec<[f32; 4]>,
+
+    /// X, Y, and Z scale samples.
+    scale: [Vec<f32>; 3],
+}
+
+impl RawTransformTrack {
+    fn with_capacity(frame_count: usize) -> Self {
+        Self {
+            position: core::array::from_fn(|_| Vec::with_capacity(frame_count)),
+            rotation: Vec::with_capacity(frame_count),
+            scale: core::array::from_fn(|_| Vec::with_capacity(frame_count)),
+        }
+    }
+}
+
 fn build_vector_track(
     samples: &[Vec<f32>; 3],
     identity_value: f32,
-    num_frames: usize,
+    frame_count: usize,
 ) -> (SplineTrackVector, [SplineTrackType; 3]) {
-    let kinds: [SplineTrackType; 3] =
-        core::array::from_fn(|axis| classify_axis(&samples[axis], identity_value));
+    let kinds = core::array::from_fn(|axis| classify_axis(&samples[axis], identity_value));
 
-    let any_dynamic = kinds.contains(&SplineTrackType::Dynamic);
-
-    if !any_dynamic {
-        let value = Vector4 {
-            x: axis_static_value(&samples[0], kinds[0], identity_value),
-            y: axis_static_value(&samples[1], kinds[1], identity_value),
-            z: axis_static_value(&samples[2], kinds[2], identity_value),
-            w: 0.0,
-        };
-
+    if !kinds.contains(&SplineTrackType::Dynamic) {
         return (
-            SplineTrackVector::Static(SplineStaticTrack { value }),
+            SplineTrackVector::Static(SplineStaticTrack {
+                value: havok_types::Vector4 {
+                    x: static_value(&samples[0], kinds[0], identity_value),
+                    y: static_value(&samples[1], kinds[1], identity_value),
+                    z: static_value(&samples[2], kinds[2], identity_value),
+                    w: 0.0,
+                },
+            }),
             kinds,
         );
     }
 
-    let degree: u8 = 1;
-    let num_items = num_frames - 1;
-    let knots = clamped_uniform_knots(num_items, degree as usize);
-
-    let tracks: [Vec<f32>; 3] = core::array::from_fn(|axis| match kinds[axis] {
+    let tracks = core::array::from_fn(|axis| match kinds[axis] {
         SplineTrackType::Dynamic => samples[axis].clone(),
         SplineTrackType::Static => vec![samples[axis][0]],
         SplineTrackType::Identity => vec![identity_value],
@@ -140,38 +175,29 @@ fn build_vector_track(
     (
         SplineTrackVector::Dynamic(SplineDynamicTrackVector {
             tracks,
-            knots,
-            degree,
+            knots: clamped_uniform_knots(frame_count, SPLINE_DEGREE as usize),
+            degree: SPLINE_DEGREE,
         }),
         kinds,
     )
 }
 
-fn axis_static_value(values: &[f32], kind: SplineTrackType, identity_value: f32) -> f32 {
+fn static_value(values: &[f32], kind: SplineTrackType, identity_value: f32) -> f32 {
     match kind {
         SplineTrackType::Static => values[0],
         SplineTrackType::Identity => identity_value,
-        SplineTrackType::Dynamic => {
-            unreachable!("caller only reaches here when no axis is Dynamic")
-        }
+        SplineTrackType::Dynamic => unreachable!(),
     }
 }
 
-/// A component is `Identity` when every sample equals the type's neutral
-/// value (0.0 for position, 1.0 for scale), `Static` when every sample is
-/// equal to some other constant, and `Dynamic` otherwise.
 fn classify_axis(values: &[f32], identity_value: f32) -> SplineTrackType {
     #[expect(
         clippy::float_cmp,
-        reason = "Track classification requires exact f32 equality."
+        reason = "Spline representation must preserve exact f32 classification."
     )]
     if values.iter().all(|&value| value == identity_value) {
-        // Identity is a semantic representation. A tolerance here would
-        // discard small but non-zero values during encoding.
         SplineTrackType::Identity
     } else if values.windows(2).all(|window| window[0] == window[1]) {
-        // Static means that every sample has the same f32 value. Do not use
-        // `f32::EPSILON` as an implicit tolerance for representation choice.
         SplineTrackType::Static
     } else {
         SplineTrackType::Dynamic
@@ -180,10 +206,13 @@ fn classify_axis(values: &[f32], identity_value: f32) -> SplineTrackType {
 
 fn build_rotation_track(
     samples: &[[f32; 4]],
-    num_frames: usize,
+    frame_count: usize,
 ) -> (SplineTrackQuat, SplineTrackType) {
-    #[expect(clippy::float_cmp)]
-    if samples.windows(2).all(|w| w[0] == w[1]) {
+    #[expect(
+        clippy::float_cmp,
+        reason = "Static quaternion detection must preserve exact samples."
+    )]
+    if samples.windows(2).all(|window| window[0] == window[1]) {
         let [x, y, z, w] = samples[0];
 
         return (
@@ -194,10 +223,6 @@ fn build_rotation_track(
         );
     }
 
-    let degree: u8 = 1;
-    let num_items = num_frames - 1;
-    let knots = clamped_uniform_knots(num_items, degree as usize);
-
     let track = samples
         .iter()
         .map(|&[x, y, z, w]| QuatA16::new(x, y, z, w))
@@ -206,29 +231,23 @@ fn build_rotation_track(
     (
         SplineTrackQuat::Dynamic(SplineDynamicTrackQuat {
             track,
-            knots,
-            degree,
+            knots: clamped_uniform_knots(frame_count, SPLINE_DEGREE as usize),
+            degree: SPLINE_DEGREE,
         }),
         SplineTrackType::Dynamic,
     )
 }
 
-/// Combines each component's classification into one `TransformMask`.
-///
-/// Quantization-type bits are left at their default (0); they're only
-/// meaningful once a block is serialized to bytes, which this function
-/// doesn't do.
 fn build_mask(
     position_kinds: [SplineTrackType; 3],
     rotation_kind: SplineTrackType,
     scale_kinds: [SplineTrackType; 3],
 ) -> TransformMask {
-    let mut mask = TransformMask {
-        quantization_types: 0,
-        position_types: 0,
-        rotation_types: 0,
-        scale_types: 0,
-    };
+    let mut mask = TransformMask::default();
+
+    mask.set_position_quantization_type(QuantizationType::Bit16);
+    mask.set_rotation_quantization_type(QuantizationType::Bit40);
+    mask.set_scale_quantization_type(QuantizationType::Bit16);
 
     mask.set_sub_track_type(TransformType::PosX, position_kinds[0]);
     mask.set_sub_track_type(TransformType::PosY, position_kinds[1]);
@@ -243,15 +262,24 @@ fn build_mask(
     mask
 }
 
-/// A clamped-uniform knot vector `[0,0,...,0, 1, 2, ..., n-1, n-1,...,n-1]`
-/// for a degree-`degree` B-spline with `num_items + 1` control points.
-///
-/// With `degree == 1`, evaluating at integer frame `t` returns exactly
-/// `control_points[t]` — this is why raw per-frame samples can be used
-/// directly as control points without any curve fitting.
-fn clamped_uniform_knots(num_items: usize, degree: usize) -> Vec<f32> {
-    let mut knots = vec![0.0f32; degree + 1];
-    knots.extend((1..num_items).map(|i| i as f32));
-    knots.extend(vec![num_items as f32; degree + 1]);
+fn clamped_uniform_knots(control_point_count: usize, degree: usize) -> Vec<f32> {
+    assert!(control_point_count > 0);
+    assert!(degree > 0);
+    assert!(control_point_count > degree);
+
+    let knot_count = control_point_count + degree + 1;
+    let interior_count = knot_count - 2 * (degree + 1);
+
+    let mut knots = Vec::with_capacity(knot_count);
+
+    knots.extend(core::iter::repeat_n(0.0, degree + 1));
+
+    for value in 1..=interior_count {
+        knots.push(value as f32);
+    }
+
+    let last = (control_point_count - degree) as f32;
+    knots.extend(core::iter::repeat_n(last, degree + 1));
+
     knots
 }

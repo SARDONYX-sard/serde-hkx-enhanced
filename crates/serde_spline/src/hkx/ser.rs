@@ -166,7 +166,7 @@ fn encode_animation<'ser>(
 
     const MAX_FRAMES_PER_BLOCK: u32 = 256;
 
-    let encoded = SplineDecompressor::from_animation(skeleton, animation)?.encode(0)?;
+    let encoded = SplineDecompressor::from_animation(skeleton, animation)?.encode()?;
 
     let num_frames = animation.num_frames;
     let duration = animation.duration;
@@ -247,22 +247,6 @@ fn validate_animation(skeleton: &Skeleton, animation: &Animation) -> Result<(), 
     }
 
     Ok(())
-}
-
-/// Raw, per-frame samples for a single transform track.
-///
-/// The animation is stored frame-major, while spline construction operates
-/// on one transform track at a time. This structure therefore contains the
-/// transposed position, rotation, and scale samples for one track.
-pub(crate) struct RawTransformTrack {
-    /// X, Y, and Z position samples.
-    pub position: [Vec<f32>; 3],
-
-    /// Quaternion samples in `[x, y, z, w]` order.
-    pub rotation: Vec<[f32; 4]>,
-
-    /// X, Y, and Z scale samples.
-    pub scale: [Vec<f32>; 3],
 }
 
 /// Converts external annotation data into Havok annotation tracks.

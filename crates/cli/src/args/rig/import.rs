@@ -11,8 +11,8 @@ use serde_hkx_features::{Format, error::Error};
 use crate::AnyError;
 
 use super::{
-    AnimationFile, Output, invalid_data, invalid_input, is_extension, output_path, relative_path,
-    write_file,
+    AnimationFile, Output, invalid_data, invalid_input, is_extension,
+    is_serde_hkx_supported_extension, output_path, relative_path, write_file,
 };
 
 #[cfg(feature = "kf")]
@@ -352,8 +352,10 @@ fn resolve_output(output: Option<&Path>, animation_count: usize) -> Result<Outpu
                 ));
             }
 
-            if !is_extension(output, "hkx") {
-                return Err(invalid_input("an output file must have the .hkx extension"));
+            if !is_serde_hkx_supported_extension(output) {
+                return Err(invalid_input(
+                    "an output file must have the .hkx, .xml or etc. extension",
+                ));
             }
 
             return Ok(Output::File(output.to_owned()));
@@ -369,7 +371,7 @@ fn resolve_output(output: Option<&Path>, animation_count: usize) -> Result<Outpu
         )));
     }
 
-    if animation_count == 1 && is_extension(output, "hkx") {
+    if animation_count == 1 && is_serde_hkx_supported_extension(output) {
         return Ok(Output::File(output.to_owned()));
     }
 

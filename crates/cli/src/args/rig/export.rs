@@ -17,8 +17,8 @@ use serde_fbx::ser::{AnimationInput as FbxAnimationInput, export_fbx};
 use crate::AnyError;
 
 use super::{
-    AnimationFile, Output, invalid_data, invalid_input, is_extension, output_path, relative_path,
-    write_file,
+    AnimationFile, Output, invalid_data, invalid_input, is_extension,
+    is_serde_hkx_supported_extension, output_path, relative_path, write_file,
 };
 
 pub const EXAMPLES: &str = color_print::cstr!(
@@ -166,7 +166,7 @@ fn resolve_animation_paths(
         .par_iter()
         .map(|input| {
             if input.is_file() {
-                if !is_extension(input, "hkx") {
+                if !is_serde_hkx_supported_extension(input.as_path()) {
                     return Err(invalid_input(format!(
                         "animation input is not an HKX file: {}",
                         input.display()
@@ -267,7 +267,7 @@ fn collect_paths(directory: &Path, recursive: bool, paths: &mut Vec<PathBuf>) ->
             if recursive {
                 collect_paths(&path, true, paths)?;
             }
-        } else if is_extension(&path, "hkx") {
+        } else if is_serde_hkx_supported_extension(path.as_path()) {
             paths.push(path);
         }
     }

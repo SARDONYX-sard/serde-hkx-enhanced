@@ -47,10 +47,20 @@ fn invalid_data(message: impl Into<String>) -> Error {
 }
 
 /// Checks whether a path has the specified file extension.
+///
+/// For `.kf` / `.fbx`
 fn is_extension(path: &Path, extension: &str) -> bool {
     path.extension()
         .and_then(|extension| extension.to_str())
         .is_some_and(|value| value.eq_ignore_ascii_case(extension))
+}
+
+/// Is this a file extension supported by serde-hkx?
+///
+/// `.hkx`, `.xml`
+fn is_serde_hkx_supported_extension(path: &Path) -> bool {
+    path.extension()
+        .is_some_and(|ext| serde_hkx_features::Format::from_extension(ext).is_ok())
 }
 
 /// Returns the path relative to the specified input root.

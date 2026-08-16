@@ -8,7 +8,7 @@ license = "GPL-3.0-or-later"
 readme = "README.md"
 repository = "https://github.com/SARDONYX-sard/serde-hkx-enhanced"                     # NOTE: Without it, CLI & CI build will error.
 rust-version = "1.95"
-version = "0.1.0"
+version = "0.1.1"
 
 [workspace]
 members = [ "crates/*" ]

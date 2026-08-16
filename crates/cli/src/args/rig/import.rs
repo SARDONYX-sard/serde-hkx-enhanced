@@ -43,6 +43,8 @@ pub const EXAMPLES: &str = color_print::cstr!(
 
 - <blue!>Specify an output file for a single animation</blue!>
   <cyan!>hkxc importrig -s</cyan!> ./skeleton.hkx <cyan!>-a</cyan!> ./idle.kf -o ./idle.hkx -v amd64
+
+
 Input behavior:
   - --animations accepts files and directories.
   - Directories are searched recursively for .kf and .fbx files.
@@ -50,13 +52,13 @@ Input behavior:
   - .kf and .fbx inputs may be mixed.
   - Unknown file extensions are ignored when scanning directories.
   - Explicit input files must have a .kf or .fbx extension.
+
 Output behavior:
   - Without --output, files are written to ./output/.
   - A single animation may use an explicit .hkx output file.
   - Multiple animations require an output directory.
   - A non-existing output path ending in .hkx is treated as a file.
   - Other non-existing output paths are treated as directories.
-  - --format controls the HKX output format (amd64, win32, xml).
 "#
 );
 

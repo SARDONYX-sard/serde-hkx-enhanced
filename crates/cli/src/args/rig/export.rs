@@ -39,6 +39,8 @@ pub const EXAMPLES: &str = color_print::cstr!(
 
 - <blue!>specify an output file for a single animation</blue!>
   <cyan!>hkxc exportrig -s</cyan!> ./skeleton.hkx <cyan!>-a</cyan!> ./animations/idle.hkx <cyan!>-o</cyan!> ./idle.kf <cyan!>-v</cyan!> kf
+
+
 Output behavior:
   - Without --output, files are written to ./output/.
   - A single animation may use an explicit .kf or .fbx output file.

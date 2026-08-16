@@ -142,11 +142,11 @@ Niflib::NiControllerSequenceRef make_animation(const Skeleton &skeleton,
   sequence->SetCycleType(Niflib::CYCLE_CLAMP);
 
   std::vector<Niflib::ControllerLink> links;
-  links.reserve(animation.num_tracks);
+  links.reserve(skeleton.bones.size());
 
-  for (std::size_t track_index = 0; track_index < animation.num_tracks;
-       ++track_index) {
-    const Bone &bone = skeleton.bones[track_index];
+  for (std::size_t bone_index = 0; bone_index < skeleton.bones.size();
+       ++bone_index) {
+    const Bone &bone = skeleton.bones[bone_index];
 
     Niflib::NiTransformInterpolatorRef interpolator =
         new Niflib::NiTransformInterpolator();
@@ -155,8 +155,7 @@ Niflib::NiControllerSequenceRef make_animation(const Skeleton &skeleton,
     interpolator->SetRotation(to_quaternion(bone.reference_pose.rotation));
     interpolator->SetScale(bone.reference_pose.scale.x);
 
-    interpolator->SetData(
-        make_transform_data(skeleton, animation, track_index));
+    interpolator->SetData(make_transform_data(skeleton, animation, bone_index));
 
     Niflib::ControllerLink link;
     link.nodeName = to_index_string(bone.name);

@@ -76,6 +76,34 @@ mod ffi {
 
 pub(crate) use self::ffi::*;
 
+impl Quaternion {
+    pub fn normalize(&mut self) {
+        let length_squared = self.w.mul_add(
+            self.w,
+            self.z
+                .mul_add(self.z, self.y.mul_add(self.y, self.x * self.x)),
+        );
+
+        if length_squared > 0.0 {
+            let inverse_length = length_squared.sqrt().recip();
+            self.x *= inverse_length;
+            self.y *= inverse_length;
+            self.z *= inverse_length;
+            self.w *= inverse_length;
+        }
+    }
+}
+
+impl Animation {
+    pub fn normalize_rotations(&mut self) {
+        for frame in &mut self.frames {
+            for transform in &mut frame.transforms {
+                transform.rotation.normalize();
+            }
+        }
+    }
+}
+
 impl From<havok_types::QsTransform> for Transform {
     fn from(value: havok_types::QsTransform) -> Self {
         Self {

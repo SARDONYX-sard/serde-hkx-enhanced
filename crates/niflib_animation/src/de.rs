@@ -60,13 +60,16 @@ fn from_kf(
     fps: f32,
     format: Format,
 ) -> Result<Vec<u8>, Error> {
-    let mut animation: Animation =
-        ffi::convert_kf(anim_input.bytes, &ffi::Skeleton::from(skeleton), fps)
-            .map_err(|error| Error::Niflib {
-                message: error.to_string(),
-            })?
-            .into();
-
+    let mut animation = {
+        let mut ffi_animation =
+            ffi::convert_kf(anim_input.bytes, &ffi::Skeleton::from(skeleton), fps).map_err(
+                |error| Error::Niflib {
+                    message: error.to_string(),
+                },
+            )?;
+        ffi_animation.normalize_rotations();
+        Animation::from(ffi_animation)
+    };
     animation.annotations = anim_input.annotations;
 
     Ok(to_hkx(skeleton, &animation, fps, format)?)

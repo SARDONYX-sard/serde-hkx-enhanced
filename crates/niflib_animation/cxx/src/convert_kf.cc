@@ -17,10 +17,6 @@
 namespace niflib_animation {
 
 namespace {
-
-constexpr float FramesPerSecond = 30.0f;
-constexpr float FrameIncrement = 1.0f / FramesPerSecond;
-
 using Vector3Key = Niflib::Key<Niflib::Vector3>;
 using QuaternionKey = Niflib::Key<Niflib::Quaternion>;
 using FloatKey = Niflib::Key<float>;
@@ -43,6 +39,26 @@ struct TransformTrack {
 bool approximately_equal(float lhs, float rhs) {
   constexpr float TOLERANCE = 1.0e-5f;
   return std::fabs(lhs - rhs) < TOLERANCE;
+}
+
+Niflib::Quaternion normalize_quaternion(Niflib::Quaternion value) {
+  // NOTE: Component-wise lerp between two unit quaternions does NOT
+  // preserve unit length. The spline compressor (e.g. THREECOMP40)
+  // assumes a unit-length input and reconstructs the dropped component
+  // via sqrt(1 - a^2 - b^2 - c^2), so feeding it a non-unit quaternion
+  // silently distorts the rotation angle on the next compression pass.
+  const float length_sq = value.w * value.w + value.x * value.x +
+                          value.y * value.y + value.z * value.z;
+
+  if (length_sq > 1.0e-12f) {
+    const float inv_length = 1.0f / std::sqrt(length_sq);
+    value.w *= inv_length;
+    value.x *= inv_length;
+    value.y *= inv_length;
+    value.z *= inv_length;
+  }
+
+  return value;
 }
 
 std::vector<Niflib::Ref<Niflib::NiObject>>
@@ -128,20 +144,16 @@ collect_tracks(const Niflib::NiControllerSequenceRef &sequence,
       continue;
     }
 
-    TransformKeys keys;
+    TransformKeys keys{
+        .translation = data->GetTranslateKeys(),
+        .rotation = data->GetQuatRotateKeys(),
+        .scale = data->GetScaleKeys(),
 
-    keys.translation = data->GetTranslateKeys();
-    keys.rotation = data->GetQuatRotateKeys();
-    keys.scale = data->GetScaleKeys();
-
-    keys.translation_type = data->GetTranslateType();
-    keys.rotation_type = data->GetRotateType();
-    keys.scale_type = data->GetScaleType();
-
-    result.push_back({
-        bone->second,
-        std::move(keys),
-    });
+        .translation_type = data->GetTranslateType(),
+        .rotation_type = data->GetRotateType(),
+        .scale_type = data->GetScaleType(),
+    };
+    result.push_back({bone->second, std::move(keys)});
   }
 
   return result;
@@ -210,6 +222,14 @@ Niflib::Quaternion sample_quaternion(const std::vector<QuaternionKey> &keys,
   const auto &previous = keys[hint - 1];
   const auto &next = keys[hint];
 
+  if (previous.time == time) {
+    return previous.data;
+  }
+
+  if (next.time == time) {
+    return next.data;
+  }
+
   if (approximately_equal(previous.time, time) || type == Niflib::CONST_KEY) {
     return previous.data;
   }
@@ -226,12 +246,14 @@ Niflib::Quaternion sample_quaternion(const std::vector<QuaternionKey> &keys,
 
   const float t = (time - previous.time) / interval;
 
-  return Niflib::Quaternion{
+  Niflib::Quaternion value{
       previous.data.w + (next.data.w - previous.data.w) * t,
       previous.data.x + (next.data.x - previous.data.x) * t,
       previous.data.y + (next.data.y - previous.data.y) * t,
       previous.data.z + (next.data.z - previous.data.z) * t,
   };
+
+  return normalize_quaternion(value);
 }
 
 float sample_float(const std::vector<FloatKey> &keys, Niflib::KeyType type,
@@ -263,14 +285,20 @@ float sample_float(const std::vector<FloatKey> &keys, Niflib::KeyType type,
     return next.data;
   }
 
-  const float interval = next.time - previous.time;
+  if (previous.time == time) {
+    return previous.data;
+  }
 
+  if (next.time == time) {
+    return next.data;
+  }
+
+  const float interval = next.time - previous.time;
   if (approximately_equal(interval, 0.0f)) {
     return previous.data;
   }
 
   const float t = (time - previous.time) / interval;
-
   return previous.data + (next.data - previous.data) * t;
 }
 
@@ -368,7 +396,7 @@ Animation convert_kf(rust::Slice<const std::uint8_t> input,
   const float duration = stop_time - start_time;
 
   const std::uint32_t num_frames =
-      static_cast<std::uint32_t>(std::floor(duration / frame_increment)) + 1;
+      static_cast<std::uint32_t>(std::round(duration / frame_increment)) + 1;
 
   Animation animation;
 
@@ -397,9 +425,7 @@ Animation convert_kf(rust::Slice<const std::uint8_t> input,
     animation.frames.push_back(std::move(frame));
   }
 
-  /*
-   * Replace reference-pose transforms with sampled KF data.
-   */
+  // Replace reference-pose transforms with sampled KF data.
   for (const auto &track : tracks) {
     std::size_t translation_hint = 0;
     std::size_t rotation_hint = 0;
@@ -411,8 +437,7 @@ Animation convert_kf(rust::Slice<const std::uint8_t> input,
     for (std::uint32_t frame_index = 0; frame_index < num_frames;
          ++frame_index) {
 
-      const float time =
-          start_time + static_cast<float>(frame_index) * frame_increment;
+      const float time = static_cast<float>(frame_index) * frame_increment;
 
       animation.frames[frame_index].transforms[track.bone_index] =
           sample_transform(track, reference, time, translation_hint,

@@ -2,11 +2,9 @@ mod color;
 mod convert;
 mod diff;
 mod dump;
-#[cfg(feature = "fbx")]
-mod fbx;
-#[cfg(feature = "kf")]
-mod kf;
 mod progress_handler;
+#[cfg(any(feature = "kf", feature = "fbx"))]
+mod rig;
 mod tree;
 mod verify;
 
@@ -49,15 +47,10 @@ pub(crate) async fn run(args: Args) -> Result<(), AnyError> {
             }
             SubCommands::Verify(args) => Ok(self::verify::verify(&args.path, args.color)?),
 
-            #[cfg(feature = "kf")]
-            SubCommands::FromKf(args) => Ok(kf::from_kf::from_kf(&args).await?),
-            #[cfg(feature = "kf")]
-            SubCommands::ToKf(args) => Ok(kf::to_kf::to_kf(&args)?),
-
-            #[cfg(feature = "fbx")]
-            SubCommands::FromFbx(args) => fbx::from_fbx::from_fbx(&args).await,
-            #[cfg(feature = "fbx")]
-            SubCommands::ToFbx(args) => Ok(fbx::to_fbx::to_fbx(&args)?),
+            #[cfg(any(feature = "kf", feature = "fbx"))]
+            SubCommands::ImportRig(args) => Ok(rig::import::importrig(&args).await?),
+            #[cfg(any(feature = "kf", feature = "fbx"))]
+            SubCommands::ExportRig(args) => Ok(rig::export::exportrig(&args)?),
 
             SubCommands::Completions { shell } => {
                 shell.generate(&mut Args::command(), &mut io::stdout());
@@ -121,25 +114,15 @@ pub(crate) enum SubCommands {
     /// Parallel hkx reproduction checks. If an error occurs, return a diff showing the location of each error.
     Verify(verify::Args),
 
-    #[cfg(feature = "kf")]
-    /// Convert Havok HKX animation to Gamebryo KF animation.
-    #[clap(name = "from-kf")]
-    FromKf(kf::from_kf::Args),
+    /// Import KF or FBX animations into Havok HKX animations.
+    #[cfg(any(feature = "kf", feature = "fbx"))]
+    #[clap(name = "importrig")]
+    ImportRig(rig::import::Args),
 
-    #[cfg(feature = "kf")]
-    /// Apply Gamebryo KF animation to Havok HKX behavior.
-    #[clap(name = "to-kf")]
-    ToKf(kf::to_kf::Args),
-
-    #[cfg(feature = "fbx")]
-    /// Convert Havok HKX animation to Gamebryo FBX animation.
-    #[clap(name = "from-fbx")]
-    FromFbx(fbx::from_fbx::Args),
-
-    #[cfg(feature = "fbx")]
-    /// Apply Gamebryo FBX animation to Havok HKX behavior.
-    #[clap(name = "to-fbx")]
-    ToFbx(fbx::to_fbx::Args),
+    #[cfg(any(feature = "kf", feature = "fbx"))]
+    /// Export Havok HKX animations to KF or FBX animations.
+    #[clap(name = "exportrig")]
+    ExportRig(rig::export::Args),
 
     /// Generate shell completions
     #[clap(arg_required_else_help = true)]

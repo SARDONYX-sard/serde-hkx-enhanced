@@ -2,10 +2,12 @@
   "rust-analyzer.check.command": "clippy",
   "cSpell.words": [
     "Bbox",
+    "exportrig",
     "Gamebryo",
     "Havok",
     "hexdump",
     "hkxc",
+    "importrig",
     "niflib",
     "PyNifly",
     "serde",

@@ -39,6 +39,8 @@
 //!
 //! Rotation spline data uses the same spline header, followed by
 //! quantization-specific alignment and quaternion control points.
+#[cfg(feature = "tracing")]
+mod debug;
 
 use havok_types::Vector4;
 
@@ -97,7 +99,7 @@ impl SplineDecompressor {
         let mut data = Vec::new();
         let mut block_offsets = Vec::with_capacity(self.blocks.len());
 
-        for block in &self.blocks {
+        for (block_index, block) in self.blocks.iter().enumerate() {
             align4(&mut data);
 
             let offset = u32::try_from(data.len())
@@ -105,7 +107,7 @@ impl SplineDecompressor {
 
             block_offsets.push(offset);
 
-            encode_block(block, &mut data)?;
+            encode_block(block, block_index, &mut data)?;
         }
 
         Ok(SplineEncodedData {
@@ -123,10 +125,20 @@ impl SplineDecompressor {
 /// 2. Four-byte alignment.
 /// 3. Translation, rotation, and scale for every transform track.
 /// 4. Sixteen-byte block alignment.
-fn encode_block(block: &TransformSplineBlock, out: &mut Vec<u8>) -> Result<(), Error> {
+fn encode_block(
+    block: &TransformSplineBlock,
+    block_index: usize,
+    out: &mut Vec<u8>,
+) -> Result<(), Error> {
+    #[cfg(not(feature = "tracing"))]
+    let _ = block_index;
+
     if block.masks.len() != block.tracks.len() {
         return Err(Error::InvalidData("mask count does not match track count"));
     }
+
+    #[cfg(feature = "tracing")]
+    let block_start = out.len();
 
     for mask in &block.masks {
         write_transform_mask(*mask, out);
@@ -134,17 +146,47 @@ fn encode_block(block: &TransformSplineBlock, out: &mut Vec<u8>) -> Result<(), E
 
     align4(out);
 
+    #[cfg(feature = "tracing")]
+    let mut debug_tracks = Vec::with_capacity(block.tracks.len());
+
     for (mask, track) in block.masks.iter().zip(&block.tracks) {
+        #[cfg(feature = "tracing")]
+        let position_offset = out.len();
         encode_position(mask, track, out)?;
+
+        #[cfg(feature = "tracing")]
+        let position_size = out.len() - position_offset;
         align4(out);
 
+        #[cfg(feature = "tracing")]
+        let rotation_offset = out.len();
         encode_rotation(mask, track, out)?;
+
+        #[cfg(feature = "tracing")]
+        let rotation_size = out.len() - rotation_offset;
         align4(out);
 
+        #[cfg(feature = "tracing")]
+        let scale_offset = out.len();
         encode_scale(mask, track, out)?;
+        #[cfg(feature = "tracing")]
+        let scale_size = out.len() - scale_offset;
+
+        #[cfg(feature = "tracing")]
+        debug_tracks.push(debug::SerializeDebugTrack {
+            position_offset,
+            position_size,
+            rotation_offset,
+            rotation_size,
+            scale_offset,
+            scale_size,
+        });
     }
 
     align16(out);
+
+    #[cfg(feature = "tracing")]
+    debug::log_serialized_block(block, block_index, block_start, out.len(), &debug_tracks);
 
     Ok(())
 }

@@ -249,22 +249,43 @@ use super::math::{
     SplineStaticTrack, SplineTrackQuat, SplineTrackType, SplineTrackVector, TransformMask,
     TransformSplineBlock, TransformTrack, TransformType, Vec4A16,
 };
-use crate::error::Error;
+use crate::error::{Error, ReadContext};
 
 struct Reader<'a> {
     data: &'a [u8],
     position: usize,
+    // For error reporting detail info
+    context: ReadContext,
 }
 
 impl<'a> Reader<'a> {
-    const fn new(data: &'a [u8]) -> Self {
-        Self { data, position: 0 }
+    fn new(data: &'a [u8]) -> Self {
+        Self {
+            data,
+            position: 0,
+            context: ReadContext::default(),
+        }
+    }
+
+    const fn unexpected_eof(&self, requested: usize) -> Error {
+        Error::UnexpectedEof {
+            position: self.position,
+            requested,
+            remaining: self.data.len().saturating_sub(self.position),
+            context: self.context,
+        }
     }
 
     fn read_u8(&mut self) -> Result<u8, Error> {
         #[cfg(feature = "tracing")]
-        tracing::trace!("enter read_u8");
-        let value = *self.data.get(self.position).ok_or(Error::UnexpectedEof)?;
+        tracing::trace!(
+            position = format_args!("{:#06x}", self.position),
+            "enter read_u8"
+        );
+        let value = *self
+            .data
+            .get(self.position)
+            .ok_or_else(|| self.unexpected_eof(1))?;
 
         self.position += 1;
         Ok(value)
@@ -272,7 +293,10 @@ impl<'a> Reader<'a> {
 
     fn read_u16_le(&mut self) -> Result<u16, Error> {
         #[cfg(feature = "tracing")]
-        tracing::trace!("enter read_u16_le");
+        tracing::trace!(
+            position = format_args!("{:#06x}", self.position),
+            "enter read_u16_le"
+        );
 
         let bytes = self.read_array::<2>()?;
         Ok(u16::from_le_bytes(bytes))
@@ -280,7 +304,10 @@ impl<'a> Reader<'a> {
 
     fn read_u32_le(&mut self) -> Result<u32, Error> {
         #[cfg(feature = "tracing")]
-        tracing::trace!("enter read_u32_le");
+        tracing::trace!(
+            position = format_args!("{:#06x}", self.position),
+            "enter read_u32_le"
+        );
 
         let bytes = self.read_array::<4>()?;
         Ok(u32::from_le_bytes(bytes))
@@ -288,20 +315,30 @@ impl<'a> Reader<'a> {
 
     fn read_f32_le(&mut self) -> Result<f32, Error> {
         #[cfg(feature = "tracing")]
-        tracing::trace!("enter read_f32_le");
+        tracing::trace!(
+            position = format_args!("{:#06x}", self.position),
+            "enter read_f32_le"
+        );
         Ok(f32::from_bits(self.read_u32_le()?))
     }
 
     fn read_array<const N: usize>(&mut self) -> Result<[u8; N], Error> {
         #[cfg(feature = "tracing")]
-        tracing::trace!(size = N, "enter read_array");
+        tracing::trace!(
+            position = format_args!("{:#06x}", self.position),
+            size = N,
+            "enter read_array"
+        );
 
-        let end = self.position.checked_add(N).ok_or(Error::UnexpectedEof)?;
+        let end = self
+            .position
+            .checked_add(N)
+            .ok_or_else(|| self.unexpected_eof(N))?;
 
         let bytes = self
             .data
             .get(self.position..end)
-            .ok_or(Error::UnexpectedEof)?;
+            .ok_or_else(|| self.unexpected_eof(N))?;
 
         let mut result = [0u8; N];
         result.copy_from_slice(bytes);
@@ -314,15 +351,19 @@ impl<'a> Reader<'a> {
     /// Skip `<count>` bytes.
     fn skip(&mut self, count: usize) -> Result<(), Error> {
         #[cfg(feature = "tracing")]
-        tracing::trace!(count, "enter skip");
+        tracing::trace!(
+            position = format_args!("{:#06x}", self.position),
+            count,
+            "enter skip"
+        );
 
         let end = self
             .position
             .checked_add(count)
-            .ok_or(Error::UnexpectedEof)?;
+            .ok_or_else(|| self.unexpected_eof(count))?;
 
         if end > self.data.len() {
-            return Err(Error::UnexpectedEof);
+            return Err(self.unexpected_eof(count));
         }
 
         self.position = end;
@@ -331,7 +372,11 @@ impl<'a> Reader<'a> {
 
     fn align(&mut self, alignment: usize) -> Result<(), Error> {
         #[cfg(feature = "tracing")]
-        tracing::trace!(alignment, "enter align");
+        tracing::trace!(
+            position = format_args!("{:#06x}", self.position),
+            alignment,
+            "enter align"
+        );
         debug_assert!(alignment.is_power_of_two());
 
         let mask = alignment - 1;
@@ -342,17 +387,21 @@ impl<'a> Reader<'a> {
 
     fn read_bytes(&mut self, count: usize) -> Result<&'a [u8], Error> {
         #[cfg(feature = "tracing")]
-        tracing::trace!(count, "enter read_bytes");
+        tracing::trace!(
+            position = format_args!("{:#06x}", self.position),
+            count,
+            "enter read_bytes"
+        );
 
         let end = self
             .position
             .checked_add(count)
-            .ok_or(Error::UnexpectedEof)?;
+            .ok_or_else(|| self.unexpected_eof(count))?;
 
         let result = self
             .data
             .get(self.position..end)
-            .ok_or(Error::UnexpectedEof)?;
+            .ok_or_else(|| self.unexpected_eof(count))?;
 
         self.position = end;
 
@@ -1112,7 +1161,7 @@ impl TransformSplineBlock {
         // Every transform track begins with a four-byte mask.
         num_tracks
             .checked_mul(size_of::<TransformMask>())
-            .ok_or(Error::UnexpectedEof)?;
+            .ok_or(Error::InvalidData("num tracks overflow multiply"))?;
 
         let mut reader = Reader::new(data);
 
@@ -1126,7 +1175,14 @@ impl TransformSplineBlock {
         reader.align(4)?; // The first transform track starts on a four-byte boundary.
 
         let mut tracks = Vec::with_capacity(num_tracks);
-        for mask in masks.iter().copied() {
+        for (track_index, mask) in masks.iter().copied().enumerate() {
+            reader.context = ReadContext {
+                block_index: None,
+                track_index: Some(track_index),
+                track_type: None,
+                quantization: None,
+            };
+
             tracks.push(read_transform_track(&mut reader, mask)?);
         }
 
@@ -1195,7 +1251,7 @@ impl SplineDecompressor {
         for &offset in block_offsets {
             let offset = offset as usize;
 
-            let block_data = data.get(offset..).ok_or(Error::UnexpectedEof)?;
+            let block_data = data.get(offset..).ok_or(Error::EmptySplineData)?;
 
             blocks.push(TransformSplineBlock::decode(
                 block_data,

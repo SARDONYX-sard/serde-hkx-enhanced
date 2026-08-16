@@ -5,7 +5,12 @@ pub enum Error {
     ///
     /// This usually means that the block is truncated or that an earlier
     /// value was decoded with the wrong size/alignment.
-    UnexpectedEof,
+    UnexpectedEof {
+        position: usize,
+        requested: usize,
+        remaining: usize,
+        context: ReadContext,
+    },
 
     /// The input contains an invalid quantization type.
     ///
@@ -150,9 +155,15 @@ pub enum Error {
 impl core::fmt::Display for Error {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            Self::UnexpectedEof => f.write_str(
-                "The input ended before the requested number of bytes was available.
-This usually means that the block is truncated or that an earlier value was decoded with the wrong size/alignment.",
+            Self::UnexpectedEof {
+                position,
+                requested,
+                remaining,
+                context,
+            } => write!(
+                f,
+                "unexpected end of input at {position:#x}: requested {requested} bytes, \
+     but only {remaining} bytes remain ({context})",
             ),
             Self::InvalidQuantizationType(value) => {
                 write!(f, "invalid quantization type: {value}")
@@ -280,5 +291,33 @@ impl From<serde_hkx_features::error::Error> for Error {
     #[inline]
     fn from(source: serde_hkx_features::error::Error) -> Self {
         Self::SerdeHkx { source }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ReadContext {
+    pub block_index: Option<usize>,
+    pub track_index: Option<usize>,
+    pub track_type: Option<crate::spline::math::SplineTrackType>,
+    pub quantization: Option<crate::spline::math::QuantizationType>,
+}
+
+impl core::fmt::Display for ReadContext {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "block={:?}", self.block_index)?;
+
+        if let Some(track_index) = self.track_index {
+            write!(f, ", track={track_index}")?;
+        }
+
+        if let Some(track_type) = self.track_type {
+            write!(f, ", type={track_type:?}")?;
+        }
+
+        if let Some(quantization) = self.quantization {
+            write!(f, ", quantization={quantization:?}")?;
+        }
+
+        Ok(())
     }
 }

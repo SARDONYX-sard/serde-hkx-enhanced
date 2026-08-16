@@ -693,7 +693,7 @@ fn write_quat_three_comp40(out: &mut Vec<u8>, quaternion: QuatA16) -> Result<(),
     const START: f32 = -core::f32::consts::FRAC_1_SQRT_2;
     const STEP: f32 = core::f32::consts::SQRT_2 / 4094.0;
 
-    let quat = quaternion.to_array();
+    let quat = quaternion.normalize().to_array();
 
     if quat.iter().any(|value| !value.is_finite()) {
         return Err(Error::InvalidData("quaternion contains a non-finite value"));

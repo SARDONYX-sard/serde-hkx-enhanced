@@ -198,7 +198,7 @@ fn set_target_coordinate_axes(scene: *mut sys::ufbxw_scene, fps: f32) {
 
     unsafe {
         sys::ufbxw_scene_set_coordinate_axes(scene, AXES);
-        sys::ufbxw_scene_set_unit_scale_factor(scene, 30.0); // default blender view too small.
+        sys::ufbxw_scene_set_unit_scale_factor(scene, 10.0);
         sys::ufbxw_scene_set_custom_frame_rate(scene, fps as f64);
     }
 }
@@ -214,6 +214,15 @@ fn create_animation(
     nodes: &[sys::ufbxw_node],
     animation: &Animation,
 ) -> Result<(), Error> {
+    #[cfg(feature = "tracing")]
+    tracing::debug!(
+        duration = animation.duration,
+        num_frames = animation.num_frames,
+        actual_frames = animation.frames.len(),
+        num_tracks = animation.num_tracks,
+        "creating FBX animation"
+    );
+
     fn seconds_to_ktime(seconds: f32) -> i64 {
         (seconds as f64 * 46_186_158_000.0).round() as i64
     }

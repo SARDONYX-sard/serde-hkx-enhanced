@@ -40,7 +40,7 @@ sonic-rs = { version = "0.5.8" }
 
 [features]
 # Enable tracing logging
-tracing = ["dep:tracing", "serde_hkx/tracing"]
+tracing = ["dep:tracing", "serde_hkx/tracing", "serde_spline/tracing"]
 
 
 [lints]

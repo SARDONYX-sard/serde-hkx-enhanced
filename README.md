@@ -21,15 +21,20 @@
 
 ## Features
 
-- [x] skeleton + animation.hkx <=> kf
-- [x] skeleton + animation.hkx <=> fbx
+- kf
+  - [x] Skeleton + animation.hkx => kf
+  - [x] kf => Skeleton + animation.hkx (It hasn't been released yet, and there's something slightly off about the spline serialization.)
 
-The following FIs are used here:
+- fbx
+  - [x] skeleton + animation.hkx => fbx
+  - [ ] fbx => skeleton + animation.hkx
+
+## build CLI
+
+The following FFI are used here:
 
 - The [`niflib`](https://github.com/niftools/niflib) FFI implemented by cxx for kf
 - The [`ufbx-write`](https://github.com/ufbx/ufbx-write) FFI implemented by cbindgen
-
-## build CLI
 
 ```shell
 git clone --recurse-submodules https://github.com/SARDONYX-sard/serde-hkx-enhanced.git;

@@ -262,6 +262,8 @@ impl<'a> Reader<'a> {
     }
 
     fn read_u8(&mut self) -> Result<u8, Error> {
+        #[cfg(feature = "tracing")]
+        tracing::trace!("enter read_u8");
         let value = *self.data.get(self.position).ok_or(Error::UnexpectedEof)?;
 
         self.position += 1;
@@ -269,26 +271,31 @@ impl<'a> Reader<'a> {
     }
 
     fn read_u16_le(&mut self) -> Result<u16, Error> {
+        #[cfg(feature = "tracing")]
+        tracing::trace!("enter read_u16_le");
+
         let bytes = self.read_array::<2>()?;
         Ok(u16::from_le_bytes(bytes))
     }
 
     fn read_u32_le(&mut self) -> Result<u32, Error> {
+        #[cfg(feature = "tracing")]
+        tracing::trace!("enter read_u32_le");
+
         let bytes = self.read_array::<4>()?;
         Ok(u32::from_le_bytes(bytes))
     }
 
-    #[expect(unused)]
-    fn read_u64_le(&mut self) -> Result<u64, Error> {
-        let bytes = self.read_array::<8>()?;
-        Ok(u64::from_le_bytes(bytes))
-    }
-
     fn read_f32_le(&mut self) -> Result<f32, Error> {
+        #[cfg(feature = "tracing")]
+        tracing::trace!("enter read_f32_le");
         Ok(f32::from_bits(self.read_u32_le()?))
     }
 
     fn read_array<const N: usize>(&mut self) -> Result<[u8; N], Error> {
+        #[cfg(feature = "tracing")]
+        tracing::trace!(size = N, "enter read_array");
+
         let end = self.position.checked_add(N).ok_or(Error::UnexpectedEof)?;
 
         let bytes = self
@@ -306,6 +313,9 @@ impl<'a> Reader<'a> {
 
     /// Skip `<count>` bytes.
     fn skip(&mut self, count: usize) -> Result<(), Error> {
+        #[cfg(feature = "tracing")]
+        tracing::trace!(count, "enter skip");
+
         let end = self
             .position
             .checked_add(count)
@@ -320,6 +330,8 @@ impl<'a> Reader<'a> {
     }
 
     fn align(&mut self, alignment: usize) -> Result<(), Error> {
+        #[cfg(feature = "tracing")]
+        tracing::trace!(alignment, "enter align");
         debug_assert!(alignment.is_power_of_two());
 
         let mask = alignment - 1;
@@ -329,6 +341,9 @@ impl<'a> Reader<'a> {
     }
 
     fn read_bytes(&mut self, count: usize) -> Result<&'a [u8], Error> {
+        #[cfg(feature = "tracing")]
+        tracing::trace!(count, "enter read_bytes");
+
         let end = self
             .position
             .checked_add(count)
@@ -454,6 +469,10 @@ fn read40_quat(reader: &mut Reader<'_>) -> Result<QuatA16, Error> {
     Ok(QuatA16::new(result[0], result[1], result[2], result[3]))
 }
 
+#[cfg_attr(
+    feature = "tracing",
+    tracing::instrument(level = "trace", skip(reader))
+)]
 fn read48_quat(reader: &mut Reader<'_>) -> Result<QuatA16, Error> {
     const MASK: u32 = (1 << 15) - 1;
     const FRACTION: f32 = 0.000043161;
@@ -486,6 +505,9 @@ fn read48_quat(reader: &mut Reader<'_>) -> Result<QuatA16, Error> {
 }
 
 fn read_quat(reader: &mut Reader<'_>, quantization: QuantizationType) -> Result<QuatA16, Error> {
+    #[cfg(feature = "tracing")]
+    tracing::trace!(quantization = ?quantization, "enter read_quat");
+
     match quantization {
         QuantizationType::Bit32 => read32_quat(reader),
         QuantizationType::Bit40 => read40_quat(reader),
@@ -742,6 +764,9 @@ fn evaluate_quat_track(track: &SplineDynamicTrackQuat, local_frame: f32) -> Resu
 }
 
 fn read_transform_mask(reader: &mut Reader<'_>) -> Result<TransformMask, Error> {
+    #[cfg(feature = "tracing")]
+    tracing::trace!("enter read_transform_mask");
+
     Ok(TransformMask {
         quantization_types: reader.read_u8()?,
         position_types: reader.read_u8()?,
@@ -1076,6 +1101,14 @@ impl TransformSplineBlock {
     /// declared data is available. Other [`SplineError`] variants indicate
     /// malformed mask, quantization, spline, or track data.
     pub fn decode(data: &[u8], num_tracks: usize, num_float_tracks: usize) -> Result<Self, Error> {
+        #[cfg(feature = "tracing")]
+        tracing::debug!(
+            data_len = format_args!("{:#06X}", data.len()),
+            num_tracks,
+            num_float_tracks,
+            "SplineDecompressor::decode"
+        );
+
         // Every transform track begins with a four-byte mask.
         num_tracks
             .checked_mul(size_of::<TransformMask>())

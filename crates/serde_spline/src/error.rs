@@ -150,7 +150,10 @@ pub enum Error {
 impl core::fmt::Display for Error {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            Self::UnexpectedEof => f.write_str("unexpected end of spline data"),
+            Self::UnexpectedEof => f.write_str(
+                "The input ended before the requested number of bytes was available.
+This usually means that the block is truncated or that an earlier value was decoded with the wrong size/alignment.",
+            ),
             Self::InvalidQuantizationType(value) => {
                 write!(f, "invalid quantization type: {value}")
             }

@@ -26,12 +26,13 @@ pub struct AnimationInput<'a> {
     pub annotations: Vec<AnimationAnnotation>,
 }
 
-/// Converts FBX animations into Havok HKX animations.
+/// Converts FBX animations into Havok HKX animation buffers.
 ///
 /// # Errors
-/// If the skeleton cannot be decoded, an FBX animation
-/// cannot be loaded or sampled, or the resulting HKX animation cannot be
-/// encoded.
+///
+/// Returns [`Error`] if the skeleton cannot be decoded, an FBX document
+/// cannot be loaded or sampled, an animation stack cannot be found, an FBX
+/// bone cannot be mapped to the target skeleton, or HKX encoding fails.
 pub fn fbx_to_hkx_bytes_vec<P>(
     skeleton_bytes: &[u8],
     skeleton_path: P,
@@ -43,7 +44,6 @@ where
     P: AsRef<Path>,
 {
     let skeleton = Skeleton::from_bytes(skeleton_bytes, skeleton_path.as_ref())?;
-
     let (outputs, errors): (Vec<Vec<u8>>, Vec<Error>) =
         fbx_animations.into_par_iter().partition_map(|animation| {
             match fbx_to_hkx(&skeleton, animation, fps, format) {
@@ -68,7 +68,8 @@ where
 ///
 /// Returns [`Error`] if the FPS is invalid, an FBX document cannot be
 /// loaded, an animation stack cannot be found, an FBX bone cannot be mapped
-/// to the target skeleton, or HKX encoding fails.
+/// to the target skeleton, the animation duration is invalid, or HKX
+/// encoding fails.
 pub(crate) fn fbx_to_hkx(
     skeleton: &Skeleton,
     input: AnimationInput<'_>,
@@ -78,18 +79,22 @@ pub(crate) fn fbx_to_hkx(
     validate_fps(fps)?;
 
     let doc = load_fbx(input.bytes)?;
-    let scene_root = &doc.scene;
+    let scene = &doc.scene;
 
-    let animation = select_animation(scene_root, input.animation_stack)?;
-    let anim = create_animation(scene_root, &animation)?;
-    let animation = sample_animation(
-        scene_root,
-        &animation,
-        &anim,
-        skeleton,
-        fps,
-        input.annotations,
-    )?;
+    let animation = select_animation(scene, input.animation_stack)?;
+    let animation = sample_animation(scene, &animation, skeleton, fps, input.annotations)?;
+
+    #[cfg(feature = "tracing")]
+    tracing::debug!(
+        skeleton_bones = skeleton.bones.len(),
+        animation_tracks = animation.num_tracks,
+        frame_count = animation.num_frames,
+        first_frame_transforms = animation
+            .frames
+            .first()
+            .map_or(0, |frame| frame.transforms.len()),
+        "FBX animation sampled"
+    );
 
     Ok(to_hkx(skeleton, &animation, fps, format)?)
 }
@@ -172,67 +177,54 @@ fn select_animation<'a>(
             .ok_or_else(|| Error::AnimationStackNotFound {
                 name: name.to_owned(),
             })?,
-
         None => &stacks[0],
     };
 
     Ok(FbxAnimation { stack })
 }
 
-fn create_animation(
-    scene: &ufbx::Scene,
-    animation: &FbxAnimation,
-) -> Result<ufbx::AnimRoot, Error> {
-    let mut layer_ids = Vec::with_capacity(animation.stack.layers.len());
-
-    for layer in &animation.stack.layers {
-        let layer_id = layer.element.typed_id as usize;
-
-        if layer_id >= scene.anim_layers.len() {
-            return Err(Error::LoadFbx {
-                message: format!(
-                    "Animation layer typed_id {} is out of bounds for scene.anim_layers (len={})",
-                    layer_id,
-                    scene.anim_layers.len(),
-                ),
-            });
-        }
-
-        layer_ids.push(layer_id as u32);
-    }
-
-    let opts = ufbx::AnimOpts {
-        layer_ids: ufbx::ListOpt::Owned(layer_ids),
-        ..Default::default()
-    };
-
-    ufbx::create_anim(scene, opts).map_err(|error| Error::LoadFbx {
-        message: error.description.as_ref().to_string(),
-    })
-}
-
 fn sample_animation(
     scene: &ufbx::Scene,
     animation: &FbxAnimation,
-    anim: &ufbx::AnimRoot,
     skeleton: &Skeleton,
     fps: f32,
     annotations: Vec<AnimationAnnotation>,
 ) -> Result<Animation, Error> {
-    let duration = (animation.stack.time_end - animation.stack.time_begin) as f32;
+    let stack = animation.stack;
+    let anim = &stack.anim;
+
+    #[cfg(feature = "tracing")]
+    tracing::debug!(
+        stack_name = %stack.element.name,
+        stack_time_begin = stack.time_begin,
+        stack_time_end = stack.time_end,
+        anim_time_begin = anim.time_begin,
+        anim_time_end = anim.time_end,
+        layer_count = stack.layers.len(),
+        custom = anim.custom,
+        "FBX animation range"
+    );
+
+    let (time_begin, time_end) = animation_time_range(stack);
+
+    let duration = (time_end - time_begin) as f32;
+
     if !duration.is_finite() || duration < 0.0 {
         return Err(Error::InvalidDuration { duration });
     }
 
     #[cfg(feature = "tracing")]
     tracing::debug!(
-        "stack element name={}, begin={}, end={}, duration={duration}, fps={fps}",
-        animation.stack.element.name,
-        animation.stack.time_begin,
-        animation.stack.time_end,
+        stack_name = %stack.element.name,
+        time_begin,
+        time_end,
+        duration,
+        fps,
+        "sampling FBX animation"
     );
 
     let num_frames = (duration * fps).ceil() as u32 + 1;
+
     if num_frames == 0 {
         return Err(Error::InvalidFrameCount {
             count: num_frames as u64,
@@ -240,11 +232,18 @@ fn sample_animation(
     }
 
     let mapping = build_bone_mapping(scene, skeleton)?;
-
+    #[cfg(feature = "tracing")]
+    tracing::debug!(
+        skeleton_bones = skeleton.bones.len(),
+        mapped_bones = mapping.len(),
+        "FBX bone mapping"
+    );
     let mut frames = Vec::with_capacity(num_frames as usize);
+
     for frame_index in 0..num_frames {
-        let time = frame_index as f64 / fps as f64;
+        let time = animation.stack.time_begin + frame_index as f64 / fps as f64;
         let transforms = sample_frame(anim, &mapping, skeleton, time);
+
         frames.push(AnimationFrame { transforms });
     }
 
@@ -257,8 +256,26 @@ fn sample_animation(
     })
 }
 
+fn animation_time_range(stack: &ufbx::AnimStack) -> (f64, f64) {
+    let stack_begin = stack.time_begin;
+    let stack_end = stack.time_end;
+
+    if stack_end > stack_begin {
+        return (stack_begin, stack_end);
+    }
+
+    let anim_begin = stack.anim.time_begin;
+    let anim_end = stack.anim.time_end;
+
+    if anim_end > anim_begin {
+        return (anim_begin, anim_end);
+    }
+
+    (stack_begin, stack_end)
+}
+
 fn sample_frame(
-    anim: &ufbx::AnimRoot,
+    anim: &ufbx::Anim,
     mapping: &[BoneMapping],
     skeleton: &Skeleton,
     time: f64,
@@ -285,6 +302,7 @@ fn sample_frame(
     };
 
     let mut transforms = vec![QS_TRANSFORM_IDENTITY; skeleton.bones.len()];
+
     for mapping in mapping {
         let transform = mapping.node.evaluate_transform(anim, time);
         transforms[mapping.track_index] = convert_transform(transform);

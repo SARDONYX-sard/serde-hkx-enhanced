@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-FileCopyrightText: (C) 2016-2023 Lukas Cone
 //
 // Reference:
 // https://github.com/PredatorCZ/HavokLib/blob/master/source/hka_spline_decompressor.hpp

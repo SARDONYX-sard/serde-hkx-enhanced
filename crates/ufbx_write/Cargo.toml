@@ -3,7 +3,7 @@ name = "ufbx_write"
 version = "0.1.0"
 description = "FBX writer"
 
-authors = [""]
+authors = ["Samuli Raivio"]        # FFI original authors
 categories = ["development-tools"]
 edition.workspace = true
 keywords = ["skyrim"]

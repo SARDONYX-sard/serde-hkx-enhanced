@@ -26,7 +26,8 @@ runs:
       shell: bash
       id: licenses
       run: |
-        echo '# SPDX-License-Identifier: GPL-3.0' > ${{ inputs.output_path }}
+        echo '# SPDX-License-Identifier: GPL-3.0-or-later' > ${{ inputs.output_path }}
+        echo '# SPDX-FileCopyrightText: (C) 2016-2023 Lukas Cone' >> ${{ inputs.output_path }}
         echo '# SPDX-FileCopyrightText: (C) 2026 SARDONYX' >> ${{ inputs.output_path }}
         echo "" >> ${{ inputs.output_path }}
 

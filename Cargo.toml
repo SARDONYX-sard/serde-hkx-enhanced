@@ -1,10 +1,10 @@
 [workspace.package]
 authors = ["SARDONYX"]
 categories = ["encoding"]
-description = "Havok Behavior (De)Serialization Library(ver. hk_2010.2.0-r1) + Nemesis ID"
+description = "Enhanced Havok Behavior (De)Serialization Library(ver. hk_2010.2.0-r1)"
 edition = "2024"
 keywords = ["serde", "havok"]
-license = "GPL-3.0"
+license = "GPL-3.0-or-later"
 readme = "README.md"
 repository = "https://github.com/SARDONYX-sard/serde-hkx-enhanced"                     # NOTE: Without it, CLI & CI build will error.
 rust-version = "1.95"

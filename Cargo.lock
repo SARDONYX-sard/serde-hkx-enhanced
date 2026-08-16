@@ -2316,6 +2316,7 @@ dependencies = [
  "indicatif",
  "mimalloc",
  "niflib_animation",
+ "rayon",
  "resvg",
  "serde_fbx",
  "serde_hkx_features",

@@ -20,6 +20,7 @@ clap_complete_command = "0.6.1" # Generate auto completion
 color-print = "0.3.7" # To color example help
 indicatif = { version = "0.18.6", features = ["rayon"] } # CLI progress bar
 mimalloc = { version = "0.1.50", optional = true }
+rayon = { workspace = true }
 serde_hkx_features = { workspace = true, features = ["clap", "tracing"] }
 tokio = { workspace = true, features = [
   "macros",

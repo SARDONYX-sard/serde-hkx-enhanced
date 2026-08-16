@@ -1,19 +1,24 @@
 //! Import KF and FBX animations into Havok HKX animations.
 
 use std::{
-    fs, io,
+    fs,
     path::{Path, PathBuf},
 };
 
+use rayon::prelude::*;
 use serde_hkx_features::{Format, error::Error};
 
 use crate::AnyError;
 
-#[cfg(feature = "fbx")]
-use serde_fbx::de::{AnimationInput as FbxAnimationInput, fbx_to_hkx_bytes_vec};
+use super::{
+    AnimationFile, Output, invalid_data, invalid_input, is_extension, output_path, relative_path,
+    write_file,
+};
 
 #[cfg(feature = "kf")]
 use niflib_animation::de::{AnimationInput as KfAnimationInput, from_kf_bytes_vec_to_hkx};
+#[cfg(feature = "fbx")]
+use serde_fbx::de::{AnimationInput as FbxAnimationInput, fbx_to_hkx_bytes_vec};
 
 pub const EXAMPLES: &str = color_print::cstr!(
     r#"Examples
@@ -38,7 +43,6 @@ pub const EXAMPLES: &str = color_print::cstr!(
 
 - <blue!>Specify an output file for a single animation</blue!>
   <cyan!>hkxc importrig -s</cyan!> ./skeleton.hkx <cyan!>-a</cyan!> ./idle.kf -o ./idle.hkx -v amd64
-
 Input behavior:
   - --animations accepts files and directories.
   - Directories are searched recursively for .kf and .fbx files.
@@ -46,7 +50,6 @@ Input behavior:
   - .kf and .fbx inputs may be mixed.
   - Unknown file extensions are ignored when scanning directories.
   - Explicit input files must have a .kf or .fbx extension.
-
 Output behavior:
   - Without --output, files are written to ./output/.
   - A single animation may use an explicit .hkx output file.
@@ -54,7 +57,7 @@ Output behavior:
   - A non-existing output path ending in .hkx is treated as a file.
   - Other non-existing output paths are treated as directories.
   - --format controls the HKX output format (amd64, win32, xml).
-  "#
+"#
 );
 
 #[derive(Debug, clap::Args)]
@@ -83,33 +86,36 @@ pub(crate) struct Args {
     pub fps: f32,
 }
 
-#[derive(Debug)]
-struct AnimationFile {
-    path: PathBuf,
-    relative_path: PathBuf,
-    bytes: Vec<u8>,
-}
-
 #[derive(Debug, Default)]
+/// Groups input animations by source format.
 struct AnimationInputs {
+    /// KF animations.
     kf: Vec<AnimationFile>,
+
+    /// FBX animations.
     fbx: Vec<AnimationFile>,
 }
 
 impl AnimationInputs {
+    /// Returns the total number of input animations.
     const fn len(&self) -> usize {
         self.kf.len() + self.fbx.len()
     }
 
+    /// Returns whether no input animations were collected.
     const fn is_empty(&self) -> bool {
         self.kf.is_empty() && self.fbx.is_empty()
     }
 }
 
 #[derive(Debug)]
-enum Output {
-    File(PathBuf),
-    Directory(PathBuf),
+/// Represents an animation converted to HKX.
+struct ConvertedAnimation {
+    /// Path relative to the input root, used to preserve the directory structure.
+    relative_path: PathBuf,
+
+    /// Converted HKX file contents.
+    bytes: Vec<u8>,
 }
 
 /// Imports KF and FBX animations into Havok HKX animations.
@@ -138,11 +144,12 @@ pub async fn importrig(args: &Args) -> Result<(), AnyError> {
         return Err(invalid_input("no .kf or .fbx animation files were found").into());
     }
 
-    let output = resolve_output(args.output.as_deref(), inputs.len())?;
+    let animation_count = inputs.len();
+    let output = resolve_output(args.output.as_deref(), animation_count)?;
 
     let skeleton_bytes = fs::read(&args.skeleton).map_err(|source| Error::IoError { source })?;
 
-    let mut outputs = Vec::with_capacity(inputs.len());
+    let mut outputs = Vec::with_capacity(animation_count);
 
     #[cfg(feature = "kf")]
     if !inputs.kf.is_empty() {
@@ -200,7 +207,7 @@ pub async fn importrig(args: &Args) -> Result<(), AnyError> {
         );
     }
 
-    if outputs.len() != inputs.len() {
+    if outputs.len() != animation_count {
         return Err(invalid_data("conversion result count does not match animation count").into());
     }
 
@@ -209,30 +216,31 @@ pub async fn importrig(args: &Args) -> Result<(), AnyError> {
     Ok(())
 }
 
-#[derive(Debug)]
-struct ConvertedAnimation {
-    relative_path: PathBuf,
-    bytes: Vec<u8>,
-}
-
+/// Resolves animation files from explicit files and directories.
 fn resolve_animations(inputs: &[PathBuf]) -> Result<AnimationInputs, Error> {
+    let results = inputs
+        .par_iter()
+        .map(|input| {
+            if input.is_file() {
+                return collect_file(input);
+            }
+
+            if input.is_dir() {
+                return collect_directory(input);
+            }
+
+            Err(invalid_input(format!(
+                "animation path does not exist or is not a file/directory: {}",
+                input.display()
+            )))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
     let mut animations = AnimationInputs::default();
 
-    for input in inputs {
-        if input.is_file() {
-            collect_file(input, &mut animations)?;
-            continue;
-        }
-
-        if input.is_dir() {
-            collect_directory(input, input, &mut animations)?;
-            continue;
-        }
-
-        return Err(invalid_input(format!(
-            "animation path does not exist or is not a file/directory: {}",
-            input.display()
-        )));
+    for result in results {
+        animations.kf.extend(result.kf);
+        animations.fbx.extend(result.fbx);
     }
 
     animations.kf.sort_by(|a, b| a.path.cmp(&b.path));
@@ -241,19 +249,26 @@ fn resolve_animations(inputs: &[PathBuf]) -> Result<AnimationInputs, Error> {
     Ok(animations)
 }
 
-fn collect_file(path: &Path, animations: &mut AnimationInputs) -> Result<(), Error> {
+/// Collects a single explicitly specified animation file.
+fn collect_file(path: &Path) -> Result<AnimationInputs, Error> {
     let extension = path.extension().and_then(|value| value.to_str());
+
+    let relative_path = path.file_name().map(PathBuf::from).ok_or_else(|| {
+        invalid_input(format!(
+            "animation path has no file name: {}",
+            path.display()
+        ))
+    })?;
+
+    let bytes = fs::read(path).map_err(|source| Error::IoError { source })?;
 
     let animation = AnimationFile {
         path: path.to_owned(),
-        relative_path: path.file_name().map(PathBuf::from).ok_or_else(|| {
-            invalid_input(format!(
-                "animation path has no file name: {}",
-                path.display()
-            ))
-        })?,
-        bytes: fs::read(path).map_err(|source| Error::IoError { source })?,
+        relative_path,
+        bytes,
     };
+
+    let mut animations = AnimationInputs::default();
 
     match extension {
         Some(extension) if extension.eq_ignore_ascii_case("kf") => {
@@ -270,65 +285,62 @@ fn collect_file(path: &Path, animations: &mut AnimationInputs) -> Result<(), Err
         }
     }
 
-    Ok(())
+    Ok(animations)
 }
 
-fn collect_directory(
-    root: &Path,
-    directory: &Path,
-    animations: &mut AnimationInputs,
-) -> Result<(), Error> {
+/// Recursively discovers KF and FBX files under a directory.
+fn collect_directory(root: &Path) -> Result<AnimationInputs, Error> {
+    let mut paths = Vec::new();
+
+    collect_paths(root, &mut paths)?;
+
+    let files = paths
+        .into_par_iter()
+        .map(|path| {
+            let relative_path = relative_path(root, &path)?;
+            let bytes = fs::read(&path).map_err(|source| Error::IoError { source })?;
+
+            Ok(AnimationFile {
+                path,
+                relative_path,
+                bytes,
+            })
+        })
+        .collect::<Result<Vec<_>, Error>>()?;
+
+    let mut animations = AnimationInputs::default();
+
+    for animation in files {
+        if is_extension(&animation.path, "kf") {
+            animations.kf.push(animation);
+        } else if is_extension(&animation.path, "fbx") {
+            animations.fbx.push(animation);
+        }
+    }
+
+    Ok(animations)
+}
+
+/// Recursively collects supported animation paths without reading their contents.
+fn collect_paths(directory: &Path, paths: &mut Vec<PathBuf>) -> Result<(), Error> {
     for entry in fs::read_dir(directory).map_err(|source| Error::IoError { source })? {
         let entry = entry.map_err(|source| Error::IoError { source })?;
         let path = entry.path();
 
         if path.is_dir() {
-            collect_directory(root, &path, animations)?;
+            collect_paths(&path, paths)?;
             continue;
         }
 
-        match path.extension().and_then(|value| value.to_str()) {
-            Some(extension) if extension.eq_ignore_ascii_case("kf") => {
-                let relative_path = path
-                    .strip_prefix(root)
-                    .map_err(|_| {
-                        invalid_data(format!(
-                            "failed to determine relative animation path: {}",
-                            path.display()
-                        ))
-                    })?
-                    .to_owned();
-
-                animations.kf.push(AnimationFile {
-                    bytes: fs::read(&path).map_err(|source| Error::IoError { source })?,
-                    path,
-                    relative_path,
-                });
-            }
-            Some(extension) if extension.eq_ignore_ascii_case("fbx") => {
-                let relative_path = path
-                    .strip_prefix(root)
-                    .map_err(|_| {
-                        invalid_data(format!(
-                            "failed to determine relative animation path: {}",
-                            path.display()
-                        ))
-                    })?
-                    .to_owned();
-
-                animations.fbx.push(AnimationFile {
-                    bytes: fs::read(&path).map_err(|source| Error::IoError { source })?,
-                    path,
-                    relative_path,
-                });
-            }
-            _ => {}
+        if is_extension(&path, "kf") || is_extension(&path, "fbx") {
+            paths.push(path);
         }
     }
 
     Ok(())
 }
 
+/// Resolves whether the output represents a file or directory.
 fn resolve_output(output: Option<&Path>, animation_count: usize) -> Result<Output, Error> {
     let output = output.unwrap_or_else(|| Path::new("output"));
 
@@ -340,7 +352,7 @@ fn resolve_output(output: Option<&Path>, animation_count: usize) -> Result<Outpu
                 ));
             }
 
-            if !has_hkx_extension(output) {
+            if !is_extension(output, "hkx") {
                 return Err(invalid_input("an output file must have the .hkx extension"));
             }
 
@@ -357,20 +369,15 @@ fn resolve_output(output: Option<&Path>, animation_count: usize) -> Result<Outpu
         )));
     }
 
-    if animation_count == 1 && has_hkx_extension(output) {
+    if animation_count == 1 && is_extension(output, "hkx") {
         return Ok(Output::File(output.to_owned()));
     }
 
     Ok(Output::Directory(output.to_owned()))
 }
 
-fn has_hkx_extension(path: &Path) -> bool {
-    path.extension()
-        .and_then(|extension| extension.to_str())
-        .is_some_and(|extension| extension.eq_ignore_ascii_case("hkx"))
-}
-
 #[cfg(feature = "kf")]
+/// Converts KF animations to HKX bytes.
 fn import_kf(
     skeleton_bytes: &[u8],
     skeleton_path: &Path,
@@ -397,6 +404,7 @@ fn import_kf(
 }
 
 #[cfg(feature = "fbx")]
+/// Converts FBX animations to HKX bytes.
 fn import_fbx(
     skeleton_bytes: &[u8],
     skeleton_path: &Path,
@@ -423,6 +431,7 @@ fn import_fbx(
     )?)
 }
 
+/// Writes converted animations to their output paths in parallel.
 fn write_outputs(output: &Output, animations: Vec<ConvertedAnimation>) -> Result<(), Error> {
     match output {
         Output::File(path) => {
@@ -431,13 +440,7 @@ fn write_outputs(output: &Output, animations: Vec<ConvertedAnimation>) -> Result
                 .next()
                 .ok_or_else(|| invalid_data("no converted animation is available"))?;
 
-            if let Some(parent) = path.parent()
-                && !parent.as_os_str().is_empty()
-            {
-                fs::create_dir_all(parent).map_err(|source| Error::IoError { source })?;
-            }
-
-            fs::write(path, animation.bytes).map_err(|source| Error::IoError { source })?;
+            write_file(path, &animation.bytes)?;
 
             tracing::info!("Written '{}'", path.display());
         }
@@ -445,27 +448,20 @@ fn write_outputs(output: &Output, animations: Vec<ConvertedAnimation>) -> Result
         Output::Directory(directory) => {
             fs::create_dir_all(directory).map_err(|source| Error::IoError { source })?;
 
-            for animation in animations {
-                let output_path = directory.join(animation.relative_path.with_extension("hkx"));
-                fs::write(&output_path, animation.bytes)
-                    .map_err(|source| Error::IoError { source })?;
+            animations
+                .into_par_iter()
+                .map(|animation| {
+                    let output_path = output_path(directory, &animation.relative_path, "hkx");
 
-                tracing::info!("Written '{}'", output_path.display());
-            }
+                    write_file(&output_path, &animation.bytes)?;
+
+                    tracing::info!("Written '{}'", output_path.display());
+
+                    Ok::<(), Error>(())
+                })
+                .collect::<Result<Vec<_>, _>>()?;
         }
     }
 
     Ok(())
-}
-
-fn invalid_input(message: impl Into<String>) -> Error {
-    Error::IoError {
-        source: io::Error::new(io::ErrorKind::InvalidInput, message.into()),
-    }
-}
-
-fn invalid_data(message: impl Into<String>) -> Error {
-    Error::IoError {
-        source: io::Error::new(io::ErrorKind::InvalidData, message.into()),
-    }
 }

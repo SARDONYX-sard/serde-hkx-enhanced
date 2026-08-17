@@ -1,6 +1,7 @@
 //! Shared types and helpers used by rig import and export.
 pub mod export;
 pub mod import;
+mod nif_caster;
 
 use std::{
     io,

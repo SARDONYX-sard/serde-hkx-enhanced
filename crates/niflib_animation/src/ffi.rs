@@ -137,18 +137,18 @@ mod ffi {
     unsafe extern "C++" {
         include!("niflib_animation.h");
 
-        fn export_kf(skeleton: &Skeleton, animation: &Animation) -> Result<Vec<u8>>;
+        pub(crate) fn export_kf(skeleton: &Skeleton, animation: &Animation) -> Result<Vec<u8>>;
         /// - input: kf file bytes
         ///
         /// NOTE: C++, no touch `Animation.annotation`
-        fn convert_kf(input: &[u8], skeleton: &Skeleton, fps: f32) -> Result<Animation>;
+        pub(crate) fn convert_kf(input: &[u8], skeleton: &Skeleton, fps: f32) -> Result<Animation>;
 
         #[allow(unused)]
-        fn load_nif(path: &str) -> Result<NifScene>;
+        pub fn load_nif(path: &str) -> Result<NifScene>;
     }
 }
 
-pub(crate) use self::ffi::*;
+pub use self::ffi::*;
 
 impl Quaternion {
     pub fn normalize(&mut self) {

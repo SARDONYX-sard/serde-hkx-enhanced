@@ -485,7 +485,8 @@ NifScene load_nif(rust::Str path) {
    * We immediately flatten the graph into NifScene so no Niflib
    * object crosses the CXX boundary.
    */
-  auto root = ReadNifTree(filename);
+  auto info = new_nif_info();
+  auto root = ReadNifTree(filename, &info);
 
   if (!root) {
     throw std::runtime_error("NIF has no root object: " + filename);

@@ -13,20 +13,20 @@ use tokio::{fs, task::JoinSet};
 
 use crate::AnyError;
 
+#[cfg(all(feature = "kf", feature = "fbx"))]
+use super::nif_caster;
 use super::{Output, invalid_input, is_serde_hkx_supported_extension, write_file};
 
 const EXAMPLES: &str = color_print::cstr!(
     r#"Examples
-
 - <blue!>Export a single animation to KF</blue!>
   <cyan!>hkxc exportrig -s</cyan!> ./skeleton.hkx <cyan!>-a</cyan!> ./animations/idle.hkx <cyan!>-v</cyan!> kf
 
-- <blue!>Export a single animation to FBX</blue!>
-  <cyan!>hkxc exportrig -s</cyan!> ./skeleton.hkx <cyan!>-a</cyan!> ./animations/idle.hkx <cyan!>-v</cyan!> fbx
+- <blue!>Export a single animation + mesh to FBX</blue!>
+  <cyan!>hkxc exportrig -s</cyan!> ./skeleton.hkx <cyan!>-a</cyan!> ./animations/idle.hkx --nif ./cow.nif <cyan!>-v</cyan!> fbx
 
 - <blue!>Export a single animation to JSON</blue!>
   <cyan!>hkxc exportrig -s</cyan!> ./skeleton.hkx <cyan!>-a</cyan!> ./animations/idle.hkx <cyan!>-v</cyan!> json
-
 - <blue!>Export an animation with annotations</blue!>
   <cyan!>hkxc exportrig -s</cyan!> ./skeleton.hkx <cyan!>-a</cyan!> ./animations/idle.hkx <cyan!>-v</cyan!> kf
   <cyan!>→</cyan!> ./output/idle.kf
@@ -34,19 +34,16 @@ const EXAMPLES: &str = color_print::cstr!(
 
 - <blue!>Export all animations in a directory</blue!>
   <cyan!>hkxc exportrig -s</cyan!> ./skeleton.hkx <cyan!>-a</cyan!> ./animations <cyan!>-v</cyan!> fbx
-
 - <blue!>Export multiple animations</blue!>
   <cyan!>hkxc exportrig -s</cyan!> ./skeleton.hkx <cyan!>-a</cyan!> ./idle.hkx ./walk.hkx <cyan!>-v</cyan!> kf
 
 - <blue!>Specify an output directory</blue!>
   <cyan!>hkxc exportrig -s</cyan!> ./skeleton.hkx <cyan!>-a</cyan!> ./animations <cyan!>-o</cyan!> ./out <cyan!>-v</cyan!> fbx
-
 - <blue!>Specify an output file for a single animation</blue!>
   <cyan!>hkxc exportrig -s</cyan!> ./skeleton.hkx <cyan!>-a</cyan!> ./animations/idle.hkx <cyan!>-o</cyan!> ./idle.kf <cyan!>-v</cyan!> kf
 
 - <blue!>Use long options</blue!>
   <cyan!>hkxc exportrig --skeleton</cyan!> ./skeleton.hkx <cyan!>--animations</cyan!> ./animations/idle.hkx <cyan!>--format</cyan!> json
-
 
 Output behavior:
   - Without --output, files are written to ./output/.
@@ -83,7 +80,6 @@ impl Format {
 
             #[cfg(feature = "fbx")]
             Self::Fbx | Self::FbxAscii => "fbx",
-
             Self::Json => "json",
         }
     }
@@ -102,6 +98,13 @@ pub(crate) struct Args {
     /// may be specified.
     #[clap(short = 'a', long, value_name = "ANIMATION", num_args = 1..)]
     pub animations: Vec<PathBuf>,
+
+    /// Optional NIF path used when exporting FBX.
+    ///
+    /// The NIF provides scene, mesh, skin, material, and texture data.
+    #[cfg(all(feature = "kf", feature = "fbx"))]
+    #[clap(long, value_name = "NIF")]
+    pub nif: Option<PathBuf>,
 
     /// Output directory or an explicit output file for a single animation.
     ///
@@ -127,14 +130,14 @@ pub(crate) struct Args {
 /// Exports Havok HKX animations to KF, FBX, or JSON.
 ///
 /// The skeleton is decoded once and shared by all animation exports.
-/// Each animation is read, decoded, converted, serialized, and written
-/// independently.
+/// When an NIF is specified, it is loaded and converted once, then shared by
+/// all FBX exports.
 ///
 /// # Errors
 ///
-/// Returns [`AnyError`] if an input path is invalid, the skeleton or an
-/// animation cannot be read or decoded, conversion or serialization fails,
-/// the output configuration is invalid, or an output file cannot be written.
+/// Returns [`AnyError`] if an input path is invalid, the skeleton, NIF, or an
+/// animation cannot be read or decoded, conversion or serialization fails, the
+/// output configuration is invalid, or an output file cannot be written.
 pub async fn exportrig(args: &Args) -> Result<(), AnyError> {
     let (animations, has_directory_input) =
         collect_animation_paths(&args.animations, !args.no_recursive)?;
@@ -170,6 +173,15 @@ pub async fn exportrig(args: &Args) -> Result<(), AnyError> {
         args.skeleton.as_path(),
     )?);
 
+    #[cfg(all(feature = "kf", feature = "fbx"))]
+    let nif = match args.nif.as_deref() {
+        Some(path) => {
+            let scene = niflib_animation::ffi::load_nif(&path.to_string_lossy())?;
+            Some(Arc::new(nif_caster::cast(scene)))
+        }
+        None => None,
+    };
+
     if matches!(args.format, Format::Json) {
         export_skeleton_json(&skeleton, &output).await?;
     }
@@ -190,6 +202,9 @@ pub async fn exportrig(args: &Args) -> Result<(), AnyError> {
         #[cfg(feature = "fbx")]
         let fps = args.fps;
 
+        #[cfg(all(feature = "kf", feature = "fbx"))]
+        let nif = nif.as_ref().map(Arc::clone);
+
         tasks.spawn(async move {
             export_animation(
                 &path,
@@ -199,6 +214,8 @@ pub async fn exportrig(args: &Args) -> Result<(), AnyError> {
                 format,
                 #[cfg(feature = "fbx")]
                 fps,
+                #[cfg(all(feature = "kf", feature = "fbx"))]
+                nif.as_deref(),
             )
             .await
         });
@@ -297,7 +314,6 @@ fn resolve_animation_output(
 ) -> Result<PathBuf, Error> {
     match output {
         Output::File(path) => Ok(path.to_owned()),
-
         Output::Directory(directory) => {
             let mut relative = match root {
                 Some(root) => input
@@ -309,7 +325,6 @@ fn resolve_animation_output(
                         ))
                     })?
                     .to_owned(),
-
                 None => input
                     .file_name()
                     .ok_or_else(|| invalid_input("animation input path has no file name"))?
@@ -392,15 +407,17 @@ async fn export_skeleton_json(skeleton: &Skeleton, output: &Output) -> Result<()
             return Err(invalid_input("JSON output requires an output directory").into());
         }
     };
+
     fs::create_dir_all(directory)
         .await
         .map_err(|source| Error::IoError { source })?;
-    let path = directory.join("skeleton.json");
 
+    let path = directory.join("skeleton.json");
     let json = sonic_rs::to_string_pretty(skeleton)?;
     write_file(&path, json.as_bytes())?;
 
     tracing::info!("Exported '{}'", path.display());
+
     Ok(())
 }
 
@@ -420,6 +437,7 @@ async fn export_animation(
     output: &Output,
     format: Format,
     #[cfg(feature = "fbx")] fps: f32,
+    #[cfg(all(feature = "kf", feature = "fbx"))] nif: Option<&serde_fbx::ser::nif_compat::Scene>,
 ) -> Result<(), AnyError> {
     let bytes = fs::read(input)
         .await
@@ -442,7 +460,9 @@ async fn export_animation(
         #[cfg(feature = "kf")]
         Format::Kf => {
             write_annotations(&animation, &output_path)?;
+
             let bytes = niflib_animation::serde_kf::to_kf(animation, skeleton)?;
+
             write_file(&output_path, &bytes)?;
         }
 
@@ -459,7 +479,8 @@ async fn export_animation(
                 fps,
             };
 
-            let bytes = serde_fbx::ser::to_fbx(&animation, skeleton, config)?;
+            let bytes = serde_fbx::ser::to_fbx(&animation, skeleton, nif, config)?;
+
             write_file(&output_path, &bytes)?;
 
             write_annotations(&animation, &output_path)?;
@@ -467,6 +488,7 @@ async fn export_animation(
 
         Format::Json => {
             let json = sonic_rs::to_string_pretty(&animation)?;
+
             write_file(&output_path, json.as_bytes())?;
         }
     }
@@ -484,15 +506,17 @@ async fn export_animation(
 /// cannot be written.
 fn write_annotations(animation: &Animation, animation_path: &Path) -> Result<(), AnyError> {
     let parent = animation_path.parent().unwrap_or_else(|| Path::new(""));
+
     let stem = animation_path
         .file_stem()
         .ok_or_else(|| invalid_input("animation output path has no file stem"))?;
-    let path = parent.join(format!("{}.annotations.json", stem.to_string_lossy()));
 
+    let path = parent.join(format!("{}.annotations.json", stem.to_string_lossy()));
     let json = sonic_rs::to_string_pretty(&animation.annotations)?;
     write_file(&path, json.as_bytes())?;
 
     tracing::info!("Exported '{}'", path.display());
+
     Ok(())
 }
 

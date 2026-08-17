@@ -8,7 +8,7 @@ license = "GPL-3.0-only" # NOTE: It can't be changed because it was inherited.
 readme = "README.md"
 repository = "https://github.com/SARDONYX-sard/serde-hkx-enhanced"                     # NOTE: Without it, CLI & CI build will error.
 rust-version = "1.95"
-version = "0.1.1"
+version = "0.2.0"
 
 [workspace]
 members = [ "crates/*" ]

@@ -12,6 +12,7 @@ pub struct Skeleton {
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Bone {
     pub name: String,
+    /// An index representing a tree-like structure. The tree root is -1
     pub parent_index: i16,
     pub reference_pose: QsTransform,
 }
@@ -32,7 +33,8 @@ pub struct AnimationFrame {
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct AnimationAnnotation {
+    pub track_index: u32,
+
     pub time: f32,
     pub text: String,
-    pub track_index: u32,
 }

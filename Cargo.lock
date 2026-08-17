@@ -2314,12 +2314,15 @@ dependencies = [
  "color-print",
  "ico",
  "indicatif",
+ "jwalk 0.9.0",
  "mimalloc",
  "niflib_animation",
  "rayon",
  "resvg",
  "serde_fbx",
  "serde_hkx_features",
+ "serde_spline",
+ "sonic-rs",
  "tiny-skia 0.12.0",
  "tokio",
  "tracing",
@@ -2798,6 +2801,16 @@ name = "jwalk"
 version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2735847566356cd2179a2a38264839308f7079fa96e6bd5a42d740460e003c56"
+dependencies = [
+ "crossbeam",
+ "rayon",
+]
+
+[[package]]
+name = "jwalk"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5e610b2b1eaea9e0e062c47e319d20a2e0f929e7aabf24d58514354de967bfbd"
 dependencies = [
  "crossbeam",
  "rayon",
@@ -4720,7 +4733,7 @@ dependencies = [
  "havok_serde",
  "havok_types",
  "indexmap 2.14.0",
- "jwalk",
+ "jwalk 0.8.1",
  "rayon",
  "serde",
  "serde_hkx",

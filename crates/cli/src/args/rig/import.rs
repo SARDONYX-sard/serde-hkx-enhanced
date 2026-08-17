@@ -1,64 +1,70 @@
-//! Import KF and FBX animations into Havok HKX animations.
+//! Import KF, FBX, and JSON animations into Havok HKX animations.
 
 use std::{
-    fs,
     path::{Path, PathBuf},
+    sync::Arc,
 };
 
-use rayon::prelude::*;
+use jwalk::WalkDir;
 use serde_hkx_features::{Format, error::Error};
+use serde_spline::hkx::{Animation, AnimationAnnotation, Skeleton, ser::to_hkx};
+use tokio::{fs, task::JoinSet};
 
-use crate::AnyError;
+use super::{invalid_input, write_file};
 
-use super::{
-    AnimationFile, Output, invalid_data, invalid_input, is_extension,
-    is_serde_hkx_supported_extension, output_path, relative_path, write_file,
-};
+use crate::{AnyError, args::rig::Output};
 
-#[cfg(feature = "kf")]
-use niflib_animation::de::{AnimationInput as KfAnimationInput, from_kf_bytes_vec_to_hkx};
-#[cfg(feature = "fbx")]
-use serde_fbx::de::{AnimationInput as FbxAnimationInput, fbx_to_hkx_bytes_vec};
-
-pub const EXAMPLES: &str = color_print::cstr!(
+const EXAMPLES: &str = color_print::cstr!(
     r#"Examples
 
 - <blue!>Import a KF animation</blue!>
-  <cyan!>hkxc importrig -s</cyan!> ./skeleton.hkx <cyan!>-a</cyan!> ./idle.kf -v amd64
+  <cyan!>hkxc importrig -s</cyan!> ./skeleton.hkx <cyan!>-a</cyan!> ./idle.kf <cyan!>-v</cyan!> amd64
 
 - <blue!>Import an FBX animation</blue!>
-  <cyan!>hkxc importrig -s</cyan!> ./skeleton.hkx <cyan!>-a</cyan!> ./idle.fbx -v win32
+  <cyan!>hkxc importrig -s</cyan!> ./skeleton.hkx <cyan!>-a</cyan!> ./idle.fbx <cyan!>-v</cyan!> amd64
 
-- <blue!>Import all KF/FBX animations in a directory</blue!>
-  <cyan!>hkxc importrig -s</cyan!> ./skeleton.hkx <cyan!>-a</cyan!> ./animations -v xml
+- <blue!>Import a JSON animation</blue!>
+  <cyan!>hkxc importrig -s</cyan!> ./skeleton.hkx <cyan!>-a</cyan!> ./idle.json <cyan!>-v</cyan!> amd64
 
-- <blue!>Import multiple animations</blue!>
-  <cyan!>hkxc importrig -s</cyan!> ./skeleton.hkx <cyan!>-a</cyan!> ./idle.kf ./walk.kf -v amd64
+- <blue!>Import a KF animation with annotations</blue!>
+  <cyan!>hkxc importrig -s</cyan!> ./skeleton.hkx <cyan!>-a</cyan!> ./idle.kf <cyan!>-v</cyan!> amd64
+  <cyan!>+</cyan!> ./idle.annotations.json
 
-- <blue!>Import KF and FBX animations together</blue!>
-  <cyan!>hkxc importrig -s</cyan!> ./skeleton.hkx <cyan!>-a</cyan!> ./idle.kf ./walk.fbx -v amd64
+- <blue!>Import an FBX animation with annotations</blue!>
+  <cyan!>hkxc importrig -s</cyan!> ./skeleton.hkx <cyan!>-a</cyan!> ./idle.fbx <cyan!>-v</cyan!> amd64
+  <cyan!>+</cyan!> ./idle.annotations.json
+
+- <blue!>Import all KF, FBX, and JSON animations in a directory</blue!>
+  <cyan!>hkxc importrig -s</cyan!> ./skeleton.hkx <cyan!>-a</cyan!> ./animations <cyan!>-v</cyan!> amd64
+
+- <blue!>Import multiple animation formats</blue!>
+  <cyan!>hkxc importrig -s</cyan!> ./skeleton.hkx <cyan!>-a</cyan!> ./idle.kf ./walk.fbx ./run.json <cyan!>-v</cyan!> amd64
 
 - <blue!>Specify an output directory</blue!>
-  <cyan!>hkxc importrig -s</cyan!> ./skeleton.hkx <cyan!>-a</cyan!> ./animations -o ./out -v amd64
+  <cyan!>hkxc importrig -s</cyan!> ./skeleton.hkx <cyan!>-a</cyan!> ./animations <cyan!>-o</cyan!> ./out <cyan!>-v</cyan!> amd64
 
-- <blue!>Specify an output file for a single animation</blue!>
-  <cyan!>hkxc importrig -s</cyan!> ./skeleton.hkx <cyan!>-a</cyan!> ./idle.kf -o ./idle.hkx -v amd64
+- <blue!>Specify an arbitrary output file name</blue!>
+  <cyan!>hkxc importrig -s</cyan!> ./skeleton.hkx <cyan!>-a</cyan!> ./idle.kf <cyan!>-o</cyan!> ./idle.animation <cyan!>-v</cyan!> amd64
+
+- <blue!>Import a JSON animation without specifying an animation stack alias</blue!>
+  <cyan!>hkxc importrig -s</cyan!> ./skeleton.hkx <cyan!>-a</cyan!> ./idle.json <cyan!>-v</cyan!> amd64
 
 
 Input behavior:
   - --animations accepts files and directories.
-  - Directories are searched recursively for .kf and .fbx files.
+  - Directories are searched recursively for .kf, .fbx, and .json files.
   - Multiple files and directories may be specified.
-  - .kf and .fbx inputs may be mixed.
+  - .kf, .fbx, and .json inputs may be mixed.
+  - KF and FBX inputs may use a neighboring .annotations.json file.
+  - JSON inputs contain annotations in the Animation object itself.
   - Unknown file extensions are ignored when scanning directories.
-  - Explicit input files must have a .kf or .fbx extension.
+  - Explicit input files must have a supported animation extension.
 
 Output behavior:
   - Without --output, files are written to ./output/.
-  - A single animation may use an explicit .hkx output file.
+  - A single animation may use any explicit output file path.
   - Multiple animations require an output directory.
-  - A non-existing output path ending in .hkx is treated as a file.
-  - Other non-existing output paths are treated as directories.
+  - Directory inputs preserve their relative path structure.
 "#
 );
 
@@ -69,12 +75,15 @@ pub(crate) struct Args {
     #[clap(short = 's', long, value_name = "SKELETON")]
     pub skeleton: PathBuf,
 
-    /// One or more KF/FBX animation files or directories.
+    /// One or more KF, FBX, or JSON animation files or directories.
+    ///
+    /// Directories are searched recursively for supported animation files.
     #[clap(short = 'a', long, value_name = "ANIMATION", num_args = 1..)]
     pub animations: Vec<PathBuf>,
 
-    /// Output directory, or an explicit .hkx path for a single animation.
+    /// Output directory or an explicit output file for a single animation.
     ///
+    /// The extension of an explicit output file does not need to be .hkx.
     /// Defaults to ./output/.
     #[clap(short, long, value_name = "OUTPUT")]
     pub output: Option<PathBuf>,
@@ -84,53 +93,30 @@ pub(crate) struct Args {
     pub format: Format,
 
     /// Frames per second for sampling animations.
+    ///
+    /// This value is used by KF and FBX importers and when converting JSON
+    /// animations back into HKX.
     #[clap(long, default_value = "30.0")]
     pub fps: f32,
 }
 
-#[derive(Debug, Default)]
-/// Groups input animations by source format.
-struct AnimationInputs {
-    /// KF animations.
-    kf: Vec<AnimationFile>,
-
-    /// FBX animations.
-    fbx: Vec<AnimationFile>,
+#[derive(Debug, Clone)]
+struct AnimationInput {
+    path: PathBuf,
+    root: Option<PathBuf>,
 }
 
-impl AnimationInputs {
-    /// Returns the total number of input animations.
-    const fn len(&self) -> usize {
-        self.kf.len() + self.fbx.len()
-    }
-
-    /// Returns whether no input animations were collected.
-    const fn is_empty(&self) -> bool {
-        self.kf.is_empty() && self.fbx.is_empty()
-    }
-}
-
-#[derive(Debug)]
-/// Represents an animation converted to HKX.
-struct ConvertedAnimation {
-    /// Path relative to the input root, used to preserve the directory structure.
-    relative_path: PathBuf,
-
-    /// Converted HKX file contents.
-    bytes: Vec<u8>,
-}
-
-/// Imports KF and FBX animations into Havok HKX animations.
+/// Imports KF, FBX, and JSON animations into Havok HKX animations.
 ///
-/// KF and FBX inputs are collected independently and converted by their
-/// respective importers. The resulting HKX files are then written together
-/// using the requested [`Format`].
+/// The skeleton is decoded once and shared by all animation imports.
+/// Each animation is read, decoded, converted, and written independently.
 ///
 /// # Errors
 ///
-/// Returns [`AnyError`] if the skeleton cannot be read, an animation path is
-/// invalid, an animation cannot be read or converted, the output configuration
-/// is invalid, or an output file cannot be written.
+/// Returns [`AnyError`] if the skeleton cannot be read or decoded, an
+/// animation path is invalid, an animation cannot be read or converted,
+/// annotations cannot be read or decoded, the output configuration is invalid,
+/// or an output file cannot be written.
 pub async fn importrig(args: &Args) -> Result<(), AnyError> {
     if args.animations.is_empty() {
         return Err(invalid_input("at least one --animations path is required").into());
@@ -140,210 +126,197 @@ pub async fn importrig(args: &Args) -> Result<(), AnyError> {
         return Err(invalid_input("--fps must be a finite value greater than zero").into());
     }
 
-    let inputs = resolve_animations(&args.animations)?;
+    let (animations, has_directory_input) = resolve_animations(&args.animations)?;
 
-    if inputs.is_empty() {
-        return Err(invalid_input("no .kf or .fbx animation files were found").into());
+    if animations.is_empty() {
+        return Err(invalid_input("no .kf, .fbx, or .json animation files were found").into());
     }
 
-    let animation_count = inputs.len();
-    let output = resolve_output(args.output.as_deref(), animation_count)?;
+    let output = resolve_output(
+        args.output.as_deref(),
+        animations.len(),
+        has_directory_input,
+    )?;
 
-    let skeleton_bytes = fs::read(&args.skeleton).map_err(|source| Error::IoError { source })?;
+    let skeleton_bytes =
+        fs::read(&args.skeleton)
+            .await
+            .map_err(|source| Error::FailedReadFile {
+                source,
+                path: args.skeleton.clone(),
+            })?;
 
-    let mut outputs = Vec::with_capacity(animation_count);
+    // NOTE: `Skeleton::from_bytes` is intended for `hkx` and XML.
+    let skeleton = Arc::new(Skeleton::from_bytes(
+        &skeleton_bytes,
+        args.skeleton.as_path(),
+    )?);
 
-    #[cfg(feature = "kf")]
-    if !inputs.kf.is_empty() {
-        let bytes = import_kf(
-            &skeleton_bytes,
-            &args.skeleton,
-            &inputs.kf,
-            args.fps,
-            args.format,
-        )?;
+    if let Output::Directory(directory) = &output {
+        fs::create_dir_all(directory)
+            .await
+            .map_err(|source| Error::IoError { source })?;
+    }
 
-        outputs.extend(
-            inputs
-                .kf
-                .iter()
-                .zip(bytes)
-                .map(|(input, bytes)| ConvertedAnimation {
-                    relative_path: input.relative_path.clone(),
-                    bytes,
-                }),
+    let mut tasks = JoinSet::new();
+
+    for animation in animations {
+        let skeleton = Arc::clone(&skeleton);
+        let output = output.clone();
+        let fps = args.fps;
+        let format = args.format;
+
+        tasks.spawn(
+            async move { import_animation(&animation, &skeleton, &output, fps, format).await },
         );
     }
 
-    #[cfg(not(feature = "kf"))]
-    if !inputs.kf.is_empty() {
-        return Err(invalid_input("KF input was specified, but the KF feature is disabled").into());
+    while let Some(result) = tasks.join_next().await {
+        result??;
     }
-
-    #[cfg(feature = "fbx")]
-    if !inputs.fbx.is_empty() {
-        let bytes = import_fbx(
-            &skeleton_bytes,
-            &args.skeleton,
-            &inputs.fbx,
-            args.fps,
-            args.format,
-        )?;
-
-        outputs.extend(
-            inputs
-                .fbx
-                .iter()
-                .zip(bytes)
-                .map(|(input, bytes)| ConvertedAnimation {
-                    relative_path: input.relative_path.clone(),
-                    bytes,
-                }),
-        );
-    }
-
-    #[cfg(not(feature = "fbx"))]
-    if !inputs.fbx.is_empty() {
-        return Err(
-            invalid_input("FBX input was specified, but the FBX feature is disabled").into(),
-        );
-    }
-
-    if outputs.len() != animation_count {
-        return Err(invalid_data("conversion result count does not match animation count").into());
-    }
-
-    write_outputs(&output, outputs)?;
 
     Ok(())
 }
 
 /// Resolves animation files from explicit files and directories.
-fn resolve_animations(inputs: &[PathBuf]) -> Result<AnimationInputs, Error> {
-    let results = inputs
-        .par_iter()
-        .map(|input| {
-            if input.is_file() {
-                return collect_file(input);
+///
+/// Explicit files are represented without a root directory. Files discovered
+/// inside a directory retain that directory so their relative paths can be
+/// preserved in the output.
+///
+/// # Errors
+///
+/// Returns [`Error`] if an input path does not exist, an explicit file does
+/// not have a supported animation extension, or a directory cannot be
+/// traversed.
+fn resolve_animations(inputs: &[PathBuf]) -> Result<(Vec<AnimationInput>, bool), Error> {
+    let mut animations = Vec::new();
+    let mut has_directory_input = false;
+
+    for input in inputs {
+        if input.is_file() {
+            if !is_animation_extension(input) {
+                return Err(invalid_input(format!(
+                    "animation input must be a .kf, .fbx, or .json file: {}",
+                    input.display()
+                )));
             }
 
-            if input.is_dir() {
-                return collect_directory(input);
-            }
+            animations.push(AnimationInput {
+                path: input.clone(),
+                root: None,
+            });
 
-            Err(invalid_input(format!(
-                "animation path does not exist or is not a file/directory: {}",
-                input.display()
-            )))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-
-    let mut animations = AnimationInputs::default();
-
-    for result in results {
-        animations.kf.extend(result.kf);
-        animations.fbx.extend(result.fbx);
-    }
-
-    animations.kf.sort_by(|a, b| a.path.cmp(&b.path));
-    animations.fbx.sort_by(|a, b| a.path.cmp(&b.path));
-
-    Ok(animations)
-}
-
-/// Collects a single explicitly specified animation file.
-fn collect_file(path: &Path) -> Result<AnimationInputs, Error> {
-    let extension = path.extension().and_then(|value| value.to_str());
-
-    let relative_path = path.file_name().map(PathBuf::from).ok_or_else(|| {
-        invalid_input(format!(
-            "animation path has no file name: {}",
-            path.display()
-        ))
-    })?;
-
-    let bytes = fs::read(path).map_err(|source| Error::IoError { source })?;
-
-    let animation = AnimationFile {
-        path: path.to_owned(),
-        relative_path,
-        bytes,
-    };
-
-    let mut animations = AnimationInputs::default();
-
-    match extension {
-        Some(extension) if extension.eq_ignore_ascii_case("kf") => {
-            animations.kf.push(animation);
-        }
-        Some(extension) if extension.eq_ignore_ascii_case("fbx") => {
-            animations.fbx.push(animation);
-        }
-        _ => {
-            return Err(invalid_input(format!(
-                "animation input must be a .kf or .fbx file: {}",
-                path.display()
-            )));
-        }
-    }
-
-    Ok(animations)
-}
-
-/// Recursively discovers KF and FBX files under a directory.
-fn collect_directory(root: &Path) -> Result<AnimationInputs, Error> {
-    let mut paths = Vec::new();
-
-    collect_paths(root, &mut paths)?;
-
-    let files = paths
-        .into_par_iter()
-        .map(|path| {
-            let relative_path = relative_path(root, &path)?;
-            let bytes = fs::read(&path).map_err(|source| Error::IoError { source })?;
-
-            Ok(AnimationFile {
-                path,
-                relative_path,
-                bytes,
-            })
-        })
-        .collect::<Result<Vec<_>, Error>>()?;
-
-    let mut animations = AnimationInputs::default();
-
-    for animation in files {
-        if is_extension(&animation.path, "kf") {
-            animations.kf.push(animation);
-        } else if is_extension(&animation.path, "fbx") {
-            animations.fbx.push(animation);
-        }
-    }
-
-    Ok(animations)
-}
-
-/// Recursively collects supported animation paths without reading their contents.
-fn collect_paths(directory: &Path, paths: &mut Vec<PathBuf>) -> Result<(), Error> {
-    for entry in fs::read_dir(directory).map_err(|source| Error::IoError { source })? {
-        let entry = entry.map_err(|source| Error::IoError { source })?;
-        let path = entry.path();
-
-        if path.is_dir() {
-            collect_paths(&path, paths)?;
             continue;
         }
 
-        if is_extension(&path, "kf") || is_extension(&path, "fbx") {
-            paths.push(path);
+        if input.is_dir() {
+            has_directory_input = true;
+
+            for entry in WalkDir::new(input).sort(true) {
+                let entry = entry.map_err(|source| {
+                    invalid_input(format!(
+                        "failed to read animation directory '{}': {source}",
+                        input.display()
+                    ))
+                })?;
+
+                if entry.file_type().is_dir() {
+                    continue;
+                }
+
+                let path = entry.path();
+
+                if !is_animation_extension(&path) {
+                    continue;
+                }
+
+                animations.push(AnimationInput {
+                    path,
+                    root: Some(input.clone()),
+                });
+            }
+
+            continue;
         }
+
+        return Err(invalid_input(format!(
+            "animation path does not exist or is not a file/directory: {}",
+            input.display()
+        )));
     }
 
-    Ok(())
+    animations.sort_by(|a, b| a.path.cmp(&b.path));
+
+    Ok((animations, has_directory_input))
+}
+
+/// Checks whether a path has a supported animation extension.
+fn is_animation_extension(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            extension.eq_ignore_ascii_case("kf")
+                || extension.eq_ignore_ascii_case("fbx")
+                || extension.eq_ignore_ascii_case("json")
+        })
+}
+
+/// Resolves an animation input to its output path.
+///
+/// For an explicitly specified single file, `root` is `None` and `output`
+/// is returned unchanged. This allows arbitrary output file names and
+/// extensions.
+///
+/// For directory inputs, the path relative to `root` is preserved and the
+/// input extension is replaced with `.hkx`.
+///
+/// # Errors
+///
+/// Returns [`Error`] if the animation path cannot be made relative to its
+/// input directory.
+fn get_rel_path(
+    input: &Path,
+    root: Option<&Path>,
+    output: &Path,
+    format: Format,
+) -> Result<PathBuf, Error> {
+    match root {
+        None => Ok(output.to_owned()),
+
+        Some(root) => {
+            let mut relative = input
+                .strip_prefix(root)
+                .map_err(|_| {
+                    invalid_input(format!(
+                        "animation path is not relative to its input directory: {}",
+                        input.display()
+                    ))
+                })?
+                .to_owned();
+
+            relative.set_extension(format.as_extension());
+
+            Ok(output.join(relative))
+        }
+    }
 }
 
 /// Resolves whether the output represents a file or directory.
-fn resolve_output(output: Option<&Path>, animation_count: usize) -> Result<Output, Error> {
+///
+/// A single explicit animation may use any output path regardless of its
+/// extension. Multiple animations and directory inputs require an output
+/// directory.
+///
+/// # Errors
+///
+/// Returns [`Error`] if an existing output path has an invalid type or a file
+/// output is requested for multiple animations.
+fn resolve_output(
+    output: Option<&Path>,
+    animation_count: usize,
+    has_directory_input: bool,
+) -> Result<Output, Error> {
     let output = output.unwrap_or_else(|| Path::new("output"));
 
     if output.exists() {
@@ -351,12 +324,6 @@ fn resolve_output(output: Option<&Path>, animation_count: usize) -> Result<Outpu
             if animation_count != 1 {
                 return Err(invalid_input(
                     "an output file can only be used with a single animation",
-                ));
-            }
-
-            if !is_serde_hkx_supported_extension(output) {
-                return Err(invalid_input(
-                    "an output file must have the .hkx, .xml or etc. extension",
                 ));
             }
 
@@ -373,99 +340,240 @@ fn resolve_output(output: Option<&Path>, animation_count: usize) -> Result<Outpu
         )));
     }
 
-    if animation_count == 1 && is_serde_hkx_supported_extension(output) {
+    if animation_count == 1 && !has_directory_input {
         return Ok(Output::File(output.to_owned()));
     }
 
     Ok(Output::Directory(output.to_owned()))
 }
 
-#[cfg(feature = "kf")]
-/// Converts KF animations to HKX bytes.
-fn import_kf(
-    skeleton_bytes: &[u8],
-    skeleton_path: &Path,
-    animations: &[AnimationFile],
+/// Imports and writes one animation.
+///
+/// KF and FBX annotations are loaded from a neighboring
+/// `<animation>.annotations.json` file. JSON animations already contain their
+/// annotations as part of the serialized [`Animation`] and therefore do not
+/// load a separate annotation file.
+///
+/// # Errors
+///
+/// Returns [`AnyError`] if the animation cannot be read, annotations cannot be
+/// read or decoded, conversion fails, or the resulting HKX cannot be written.
+async fn import_animation(
+    input: &AnimationInput,
+    skeleton: &Skeleton,
+    output: &Output,
     fps: f32,
     format: Format,
-) -> Result<Vec<Vec<u8>>, AnyError> {
-    let inputs = animations
-        .iter()
-        .map(|animation| KfAnimationInput {
-            bytes: &animation.bytes,
-            path: animation.path.as_path(),
-            annotations: Vec::new(),
-        })
-        .collect::<Vec<_>>();
+) -> Result<(), AnyError> {
+    let bytes = fs::read(&input.path)
+        .await
+        .map_err(|source| Error::FailedReadFile {
+            source,
+            path: input.path.clone(),
+        })?;
 
-    Ok(from_kf_bytes_vec_to_hkx(
-        skeleton_bytes,
-        skeleton_path,
-        inputs,
-        fps,
-        format,
-    )?)
-}
-
-#[cfg(feature = "fbx")]
-/// Converts FBX animations to HKX bytes.
-fn import_fbx(
-    skeleton_bytes: &[u8],
-    skeleton_path: &Path,
-    animations: &[AnimationFile],
-    fps: f32,
-    format: Format,
-) -> Result<Vec<Vec<u8>>, AnyError> {
-    let inputs = animations
-        .iter()
-        .map(|animation| FbxAnimationInput {
-            bytes: &animation.bytes,
-            path: animation.path.as_path(),
-            animation_stack: None,
-            annotations: Vec::new(),
-        })
-        .collect::<Vec<_>>();
-
-    Ok(fbx_to_hkx_bytes_vec(
-        skeleton_bytes,
-        skeleton_path,
-        inputs,
-        fps,
-        format,
-    )?)
-}
-
-/// Writes converted animations to their output paths in parallel.
-fn write_outputs(output: &Output, animations: Vec<ConvertedAnimation>) -> Result<(), Error> {
-    match output {
-        Output::File(path) => {
-            let animation = animations
-                .into_iter()
-                .next()
-                .ok_or_else(|| invalid_data("no converted animation is available"))?;
-
-            write_file(path, &animation.bytes)?;
-
-            tracing::info!("Written '{}'", path.display());
-        }
-
+    let output_path = match output {
+        Output::File(path) => get_rel_path(&input.path, input.root.as_deref(), path, format)?,
         Output::Directory(directory) => {
-            fs::create_dir_all(directory).map_err(|source| Error::IoError { source })?;
-
-            animations
-                .into_par_iter()
-                .map(|animation| {
-                    let output_path = output_path(directory, &animation.relative_path, "hkx");
-
-                    write_file(&output_path, &animation.bytes)?;
-
-                    tracing::info!("Written '{}'", output_path.display());
-
-                    Ok::<(), Error>(())
-                })
-                .collect::<Result<Vec<_>, _>>()?;
+            get_rel_path(&input.path, input.root.as_deref(), directory, format)?
         }
+    };
+
+    if let Some(parent) = output_path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        fs::create_dir_all(parent)
+            .await
+            .map_err(|source| Error::IoError { source })?;
     }
 
+    let extension = input
+        .path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .map(str::to_ascii_lowercase);
+
+    let converted = match extension.as_deref() {
+        #[cfg(feature = "kf")]
+        Some("kf") => {
+            let config = niflib_animation::serde_kf::DeConfig {
+                annotations: read_annotations(&input.path).await?,
+                fps,
+                format,
+            };
+            niflib_animation::serde_kf::from_kf(&bytes, skeleton, config)?
+        }
+
+        #[cfg(not(feature = "kf"))]
+        Some("kf") => {
+            return Err(
+                invalid_input("KF input was specified, but the KF feature is disabled").into(),
+            );
+        }
+
+        #[cfg(feature = "fbx")]
+        Some("fbx") => {
+            let config = serde_fbx::de::Config {
+                annotations: read_annotations(&input.path).await?,
+                fps,
+                format,
+                animation_stack: None,
+            };
+            serde_fbx::de::from_fbx(&bytes, skeleton, config)?
+        }
+
+        #[cfg(not(feature = "fbx"))]
+        Some("fbx") => {
+            return Err(
+                invalid_input("FBX input was specified, but the FBX feature is disabled").into(),
+            );
+        }
+
+        Some("json") => {
+            let animation: Animation = sonic_rs::from_slice(&bytes)?;
+
+            to_hkx(skeleton, &animation, fps, format)?
+        }
+
+        _ => {
+            return Err(invalid_input(format!(
+                "unsupported animation extension: {}",
+                input.path.display()
+            ))
+            .into());
+        }
+    };
+
+    write_file(&output_path, &converted)?;
+
+    tracing::info!("Imported '{}'", output_path.display());
+
     Ok(())
+}
+
+/// Reads optional animation annotations for KF and FBX inputs.
+///
+/// The annotation file uses the `<animation>.annotations.json` naming
+/// convention. A missing annotation file is treated as an empty annotation
+/// list.
+///
+/// # Errors
+///
+/// Returns [`AnyError`] if the annotation file exists but cannot be read or
+/// deserialized.
+async fn read_annotations(animation_path: &Path) -> Result<Vec<AnimationAnnotation>, AnyError> {
+    let parent = animation_path.parent().unwrap_or_else(|| Path::new(""));
+
+    let stem = animation_path
+        .file_stem()
+        .ok_or_else(|| invalid_input("animation input path has no file stem"))?;
+
+    let path = parent.join(format!("{}.annotations.json", stem.to_string_lossy()));
+
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+
+    let bytes = fs::read(&path)
+        .await
+        .map_err(|source| Error::FailedReadFile {
+            source,
+            path: path.clone(),
+        })?;
+
+    Ok(sonic_rs::from_slice(&bytes)?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn is_animation_extension_accepts_kf() {
+        assert!(is_animation_extension(Path::new("idle.kf")));
+        assert!(is_animation_extension(Path::new("idle.KF")));
+    }
+
+    #[test]
+    fn is_animation_extension_accepts_fbx() {
+        assert!(is_animation_extension(Path::new("idle.fbx")));
+        assert!(is_animation_extension(Path::new("idle.FBX")));
+    }
+
+    #[test]
+    fn is_animation_extension_accepts_json() {
+        assert!(is_animation_extension(Path::new("idle.json")));
+        assert!(is_animation_extension(Path::new("idle.JSON")));
+    }
+
+    #[test]
+    fn is_animation_extension_rejects_unknown_extension() {
+        assert!(!is_animation_extension(Path::new("idle.hkx")));
+        assert!(!is_animation_extension(Path::new("idle.txt")));
+    }
+
+    #[test]
+    fn get_rel_path_uses_exact_output_for_single_file() {
+        let input = Path::new("animations/idle.kf");
+        let output = Path::new("custom.animation");
+        let format = Format::Amd64;
+
+        let result = get_rel_path(input, None, output, format).unwrap();
+
+        assert_eq!(result, PathBuf::from("custom.animation"));
+    }
+
+    #[test]
+    fn get_rel_path_preserves_directory_structure() {
+        let input = Path::new("animations/actors/human/idle.kf");
+        let root = Path::new("animations");
+        let output = Path::new("output");
+        let format = Format::Xml;
+
+        let result = get_rel_path(input, Some(root), output, format).unwrap();
+
+        assert_eq!(result, PathBuf::from("output/actors/human/idle.xml"));
+    }
+
+    #[test]
+    fn get_rel_path_changes_json_extension_to_hkx() {
+        let input = Path::new("animations/actors/human/idle.json");
+        let root = Path::new("animations");
+        let output = Path::new("output");
+        let format = Format::Win32;
+
+        let result = get_rel_path(input, Some(root), output, format).unwrap();
+
+        assert_eq!(result, PathBuf::from("output/actors/human/idle.hkx"));
+    }
+
+    #[test]
+    fn get_rel_path_rejects_path_outside_root() {
+        let input = Path::new("other/idle.kf");
+        let root = Path::new("animations");
+        let output = Path::new("output");
+        let format = Format::Win32;
+
+        let result = get_rel_path(input, Some(root), output, format);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn resolve_output_allows_arbitrary_single_file_extension() {
+        let output = Path::new("custom.animation");
+
+        let result = resolve_output(Some(output), 1, false).unwrap();
+
+        assert_eq!(result, Output::File(output.to_owned()));
+    }
+
+    #[test]
+    fn resolve_output_uses_directory_for_multiple_files() {
+        let output = Path::new("custom.animation");
+
+        let result = resolve_output(Some(output), 2, false).unwrap();
+
+        assert_eq!(result, Output::Directory(output.to_owned()));
+    }
 }

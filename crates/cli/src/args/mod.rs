@@ -50,7 +50,7 @@ pub(crate) async fn run(args: Args) -> Result<(), AnyError> {
             #[cfg(any(feature = "kf", feature = "fbx"))]
             SubCommands::ImportRig(args) => Ok(rig::import::importrig(&args).await?),
             #[cfg(any(feature = "kf", feature = "fbx"))]
-            SubCommands::ExportRig(args) => Ok(rig::export::exportrig(&args)?),
+            SubCommands::ExportRig(args) => Ok(rig::export::exportrig(&args).await?),
 
             SubCommands::Completions { shell } => {
                 shell.generate(&mut Args::command(), &mut io::stdout());

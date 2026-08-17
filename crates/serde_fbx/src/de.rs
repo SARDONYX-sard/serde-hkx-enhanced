@@ -1,65 +1,42 @@
 use havok_types::{QsTransform, Quaternion, Vector4};
-use rayon::{iter::Either, prelude::*};
 use serde_hkx_features::Format;
-use serde_spline::hkx::ser::to_hkx;
+use serde_spline::hkx::{Animation, AnimationAnnotation, AnimationFrame, Skeleton, ser::to_hkx};
 use std::collections::HashMap;
-use std::path::Path;
-
-use serde_spline::hkx::{Animation, AnimationAnnotation, AnimationFrame, Skeleton};
 
 use crate::Error;
 
-/// Input FBX animation.
-pub struct AnimationInput<'a> {
-    /// FBX document bytes.
-    pub bytes: &'a [u8],
-
-    /// Source FBX path.
-    pub path: &'a Path,
-
-    /// Optional animation stack name.
-    ///
-    /// When `None`, the first animation stack is used.
-    pub animation_stack: Option<&'a str>,
-
-    /// Additional Havok annotation tracks.
+/// Configuration for converting an FBX animation into a Havok animation.
+#[derive(Debug)]
+pub struct Config {
+    /// Animation annotations applied while sampling the FBX animation.
     pub annotations: Vec<AnimationAnnotation>,
+
+    /// Sampling rate of the output animation, in frames per second.
+    pub fps: f32,
+
+    /// Target Havok HKX format.
+    pub format: Format,
+
+    /// Name of the FBX animation stack to convert.
+    ///
+    /// When `None`, an animation stack with a non-empty time range is
+    /// selected first. If no such stack exists, the first animation stack
+    /// is used.
+    pub animation_stack: Option<String>,
 }
 
-/// Converts FBX animations into Havok HKX animation buffers.
-///
-/// # Errors
-///
-/// Returns [`Error`] if the skeleton cannot be decoded, an FBX document
-/// cannot be loaded or sampled, an animation stack cannot be found, an
-/// FBX bone cannot be mapped to the target skeleton, or HKX encoding fails.
-pub fn fbx_to_hkx_bytes_vec<P>(
-    skeleton_bytes: &[u8],
-    skeleton_path: P,
-    fbx_animations: Vec<AnimationInput<'_>>,
-    fps: f32,
-    format: Format,
-) -> Result<Vec<Vec<u8>>, Error>
-where
-    P: AsRef<Path>,
-{
-    let skeleton = Skeleton::from_bytes(skeleton_bytes, skeleton_path.as_ref())?;
-    let (outputs, errors): (Vec<Vec<u8>>, Vec<Error>) =
-        fbx_animations.into_par_iter().partition_map(|animation| {
-            match fbx_to_hkx(&skeleton, animation, fps, format) {
-                Ok(output) => Either::Left(output),
-                Err(error) => Either::Right(error),
-            }
-        });
-
-    if errors.is_empty() {
-        Ok(outputs)
-    } else {
-        Err(Error::Errors { errors })
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            annotations: Default::default(),
+            fps: 30.0,
+            format: Format::Amd64,
+            animation_stack: None,
+        }
     }
 }
 
-/// Converts one or more FBX animations into Havok HKX animation buffers.
+/// Converts one FBX animation into Havok HKX animation buffers.
 ///
 /// The skeleton is supplied separately because the target Havok skeleton
 /// determines the track ordering of the resulting animation.
@@ -70,18 +47,20 @@ where
 /// loaded, an animation stack cannot be found, an FBX bone cannot be
 /// mapped to the target skeleton, the animation duration is invalid,
 /// or HKX encoding fails.
-pub(crate) fn fbx_to_hkx(
-    skeleton: &Skeleton,
-    input: AnimationInput<'_>,
-    fps: f32,
-    format: Format,
-) -> Result<Vec<u8>, Error> {
+pub fn from_fbx(bytes: &[u8], skeleton: &Skeleton, config: Config) -> Result<Vec<u8>, Error> {
+    let Config {
+        annotations,
+        fps,
+        format,
+        animation_stack,
+    } = config;
+
     validate_fps(fps)?;
-    let doc = load_fbx(input.bytes)?;
+    let doc = load_fbx(bytes)?;
     let scene = &doc.scene;
 
-    let animation = select_animation(scene, input.animation_stack)?;
-    let animation = sample_animation(scene, &animation, skeleton, fps, input.annotations)?;
+    let animation = select_animation(scene, animation_stack.as_deref())?;
+    let animation = sample_animation(scene, &animation, skeleton, fps, annotations)?;
 
     #[cfg(feature = "tracing")]
     tracing::debug!(

@@ -202,13 +202,14 @@ std::vector<std::uint8_t> write_kf(Niflib::NiControllerSequence *sequence) {
 
 } // namespace
 
-rust::Vec<std::uint8_t> export_kf(const Kf &input) {
-  if (input.skeleton.bones.empty()) {
+rust::Vec<std::uint8_t> export_kf(const Skeleton &skeleton,
+                                  const Animation &animation) {
+  if (skeleton.bones.empty()) {
     throw std::runtime_error("cannot convert KF with an empty skeleton");
   }
 
   // The current niflib KF writer accepts one root object.
-  auto sequence = make_animation(input.skeleton, input.animation);
+  auto sequence = make_animation(skeleton, animation);
   const std::vector<std::uint8_t> bytes = write_kf(sequence);
 
   // to rust vec

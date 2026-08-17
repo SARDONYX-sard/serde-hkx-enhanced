@@ -9,7 +9,7 @@ use std::{
 
 use serde_hkx_features::error::Error;
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 /// Represents where converted animation files should be written.
 enum Output {
     /// Writes the converted animation to a single file.
@@ -19,40 +19,11 @@ enum Output {
     Directory(PathBuf),
 }
 
-#[derive(Debug)]
-/// Represents an animation file and its path relative to the input root.
-struct AnimationFile {
-    /// Original input file path.
-    pub path: PathBuf,
-
-    /// Path relative to the input root, used to preserve the directory structure.
-    pub relative_path: PathBuf,
-
-    /// Raw animation file contents.
-    pub bytes: Vec<u8>,
-}
-
 /// Creates an invalid-input error for CLI argument validation.
 fn invalid_input(message: impl Into<String>) -> Error {
     Error::IoError {
         source: io::Error::new(io::ErrorKind::InvalidInput, message.into()),
     }
-}
-
-/// Creates an invalid-data error for malformed or incompatible animation data.
-fn invalid_data(message: impl Into<String>) -> Error {
-    Error::IoError {
-        source: io::Error::new(io::ErrorKind::InvalidData, message.into()),
-    }
-}
-
-/// Checks whether a path has the specified file extension.
-///
-/// For `.kf` / `.fbx`
-fn is_extension(path: &Path, extension: &str) -> bool {
-    path.extension()
-        .and_then(|extension| extension.to_str())
-        .is_some_and(|value| value.eq_ignore_ascii_case(extension))
 }
 
 /// Is this a file extension supported by serde-hkx?
@@ -61,21 +32,6 @@ fn is_extension(path: &Path, extension: &str) -> bool {
 fn is_serde_hkx_supported_extension(path: &Path) -> bool {
     path.extension()
         .is_some_and(|ext| serde_hkx_features::Format::from_extension(ext).is_ok())
-}
-
-/// Returns the path relative to the specified input root.
-fn relative_path(root: &Path, path: &Path) -> Result<PathBuf, Error> {
-    path.strip_prefix(root).map(Path::to_owned).map_err(|_| {
-        invalid_data(format!(
-            "failed to determine relative path: {}",
-            path.display()
-        ))
-    })
-}
-
-/// Builds an output path while preserving the input directory structure.
-fn output_path(directory: &Path, relative_path: &Path, extension: &str) -> PathBuf {
-    directory.join(relative_path).with_extension(extension)
 }
 
 /// Creates the parent directory required for an output file.

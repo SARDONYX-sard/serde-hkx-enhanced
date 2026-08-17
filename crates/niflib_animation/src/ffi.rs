@@ -58,19 +58,93 @@ mod ffi {
     }
 
     #[derive(Clone, Debug)]
-    pub struct Kf {
-        pub skeleton: Skeleton,
-        pub animation: Animation,
+    pub struct Vector3 {
+        pub x: f32,
+        pub y: f32,
+        pub z: f32,
+    }
+
+    #[derive(Clone, Debug)]
+    pub struct Matrix3 {
+        pub x: Vector3,
+        pub y: Vector3,
+        pub z: Vector3,
+        pub w: Vector3,
+    }
+
+    #[derive(Clone, Debug)]
+    pub struct NifNode {
+        pub name: String,
+
+        pub translation: Vector3,
+        pub rotation: Matrix3,
+        pub scale: f32,
+
+        pub parent: i32,
+    }
+
+    #[derive(Clone, Debug)]
+    pub struct NifSkin {
+        pub bones: Vec<String>,
+
+        pub bone_indices: Vec<u16>,
+        pub bone_weights: Vec<f32>,
+
+        pub bind_matrices: Vec<Matrix3>,
+    }
+
+    #[derive(Clone, Debug)]
+    pub struct NifMesh {
+        pub name: String,
+
+        pub positions: Vec<f32>,
+        pub normals: Vec<f32>,
+        pub tangents: Vec<f32>,
+        pub uvs: Vec<f32>,
+
+        pub indices: Vec<u32>,
+
+        pub node: i32,
+        pub material: i32,
+        pub skin: i32,
+    }
+
+    #[derive(Clone, Debug)]
+    pub struct NifTexture {
+        pub diffuse: String,
+        pub normal: String,
+        pub glow: String,
+        pub specular: String,
+    }
+
+    #[derive(Clone, Debug)]
+    pub struct NifMaterial {
+        pub name: String,
+        /// texture index
+        /// - `-1`: None
+        pub texture: i32,
+    }
+
+    #[derive(Clone, Debug)]
+    pub struct NifScene {
+        pub nodes: Vec<NifNode>,
+        pub meshes: Vec<NifMesh>,
+        pub skins: Vec<NifSkin>,
+        pub materials: Vec<NifMaterial>,
+        pub textures: Vec<NifTexture>,
     }
 
     unsafe extern "C++" {
         include!("niflib_animation.h");
 
-        fn export_kf(input: &Kf) -> Result<Vec<u8>>;
+        fn export_kf(skeleton: &Skeleton, animation: &Animation) -> Result<Vec<u8>>;
         /// - input: kf file bytes
         ///
         /// NOTE: C++, no touch `Animation.annotation`
         fn convert_kf(input: &[u8], skeleton: &Skeleton, fps: f32) -> Result<Animation>;
+
+        #[allow(unused)]
+        fn load_nif(path: &str) -> Result<NifScene>;
     }
 }
 

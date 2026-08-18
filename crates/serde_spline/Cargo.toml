@@ -14,9 +14,9 @@ rust-version.workspace = true
 
 [dependencies]
 bitflags = { workspace = true }
-rayon = { workspace = true }                    # Parallel
+rayon = { workspace = true }
 serde = { workspace = true }
-snafu = { workspace = true }                    # Define all error patterns(with backtrace)
+snafu = { workspace = true }
 tracing = { workspace = true, optional = true }
 winnow = { workspace = true }
 

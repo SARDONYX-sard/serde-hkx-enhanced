@@ -1006,16 +1006,12 @@ fn read_vector_track(
         w: 0.0,
     };
 
-    for axis in [0, 1, 2] {
+    for (axis, v) in [&mut value.x, &mut value.y, &mut value.z]
+        .iter_mut()
+        .enumerate()
+    {
         if mask.sub_track_type(transform_types[axis]) == SplineTrackType::Static {
-            let component = reader.read_f32_le()?;
-
-            match axis {
-                0 => value.x = component,
-                1 => value.y = component,
-                2 => value.z = component,
-                _ => unreachable!(),
-            }
+            **v = reader.read_f32_le()?;
         }
     }
 

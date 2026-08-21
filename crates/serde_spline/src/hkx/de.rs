@@ -7,7 +7,7 @@ use serde_hkx_features::convert::process_serde_with;
 
 use super::{Animation, AnimationAnnotation, AnimationFrame, Bone, Skeleton};
 use crate::error::Error;
-use crate::spline::SplineDecompressor;
+use crate::spline::SplineData;
 
 impl Animation {
     /// Extract animation information from `hkaSplineCompressedAnimation` using `bytes`
@@ -106,8 +106,11 @@ fn de_animation(class_map: &ClassMap<'_>, skeleton: &Skeleton) -> Result<Animati
     let num_frames = spline.m_numFrames as usize;
     let num_tracks = spline.parent.m_numberOfTransformTracks as usize;
     let num_float_tracks = spline.parent.m_numberOfFloatTracks as usize;
-
     let num_blocks = spline.m_numBlocks;
+    let endian = match spline.m_endian {
+        0 => winnow::binary::Endianness::Little,
+        _ => winnow::binary::Endianness::Big,
+    };
 
     if num_blocks == 0 {
         return Err(Error::EmptySplineData);
@@ -128,7 +131,7 @@ fn de_animation(class_map: &ClassMap<'_>, skeleton: &Skeleton) -> Result<Animati
     }
 
     let decompressor =
-        SplineDecompressor::decode(data, block_offsets, num_tracks, num_float_tracks)?;
+        SplineData::decode(data, block_offsets, num_tracks, num_float_tracks, endian)?;
 
     let track_to_bone = find_track_to_bone(class_map);
 
@@ -158,7 +161,7 @@ fn de_animation(class_map: &ClassMap<'_>, skeleton: &Skeleton) -> Result<Animati
 /// The skeleton reference pose is used as the base frame. Decoded transform
 /// tracks overwrite the corresponding bone transforms.
 fn decode_frames(
-    decompressor: &SplineDecompressor,
+    decompressor: &SplineData,
     num_frames: usize,
     num_tracks: usize,
     track_to_bone: &[usize],

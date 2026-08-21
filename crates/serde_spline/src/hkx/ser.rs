@@ -20,7 +20,7 @@ use serde_hkx_features::{ClassMap, Format, convert::serialize_class_map};
 use super::{Animation, AnimationAnnotation, Skeleton};
 use crate::{
     error::Error,
-    spline::{SplineDecompressor, math::TransformMask},
+    spline::{SplineData, math::TransformMask},
 };
 
 /// Encodes a sampled FBX animation into a spline-compressed Havok animation.
@@ -173,7 +173,7 @@ fn encode_animation<'ser>(
     validate_animation(skeleton, animation)?;
 
     const MAX_FRAMES_PER_BLOCK: u32 = 256;
-    let encoded = SplineDecompressor::from_animation(skeleton, animation)?.encode()?;
+    let encoded = SplineData::from_animation(skeleton, animation)?.encode()?;
 
     let num_frames = animation.num_frames;
     let frame_duration = 1.0 / fps;

@@ -1007,15 +1007,15 @@ impl TransformMask {
     #[inline]
     pub const fn set_rotation_quantization_type(&mut self, kind: QuantizationType) {
         let value = match kind {
-            QuantizationType::Bit32 => 2,
-            QuantizationType::Bit40 => 3,
-            QuantizationType::Bit48 => 4,
-            QuantizationType::Bit24 => 5,
-            QuantizationType::Bit16Quat => 6,
-            QuantizationType::Uncompressed => 7,
+            QuantizationType::Bit32 => 0,
+            QuantizationType::Bit40 => 1,
+            QuantizationType::Bit48 => 2,
+            QuantizationType::Bit24 => 3,
+            QuantizationType::Bit16Quat => 4,
+            QuantizationType::Uncompressed => 5,
             _ => return,
         };
-        let bits = (value - 2) & 0x0f;
+        let bits = value & 0x0f;
         self.quantization_types = (self.quantization_types & !(0x0f << 2)) | (bits << 2);
     }
 
@@ -1106,16 +1106,16 @@ impl TransformMask {
     /// Returns the rotation quantization type.
     ///
     /// # Errors
-    /// out of range 2..=7
+    /// out of range 0..=5
     #[inline]
     pub const fn rotation_quantization_type(self) -> Result<QuantizationType, Error> {
-        match ((self.quantization_types >> 2) & 0x0f) + 2 {
-            2 => Ok(QuantizationType::Bit32),
-            3 => Ok(QuantizationType::Bit40),
-            4 => Ok(QuantizationType::Bit48),
-            5 => Ok(QuantizationType::Bit24),
-            6 => Ok(QuantizationType::Bit16Quat),
-            7 => Ok(QuantizationType::Uncompressed),
+        match (self.quantization_types >> 2) & 0x0f {
+            0 => Ok(QuantizationType::Bit32),
+            1 => Ok(QuantizationType::Bit40),
+            2 => Ok(QuantizationType::Bit48),
+            3 => Ok(QuantizationType::Bit24),
+            4 => Ok(QuantizationType::Bit16Quat),
+            5 => Ok(QuantizationType::Uncompressed),
             value => Err(Error::InvalidQuantizationType(value)),
         }
     }
@@ -1231,4 +1231,17 @@ pub enum SplineTrackQuat {
 pub struct TransformSplineBlock {
     pub masks: Vec<TransformMask>,
     pub tracks: Vec<TransformTrack>,
+}
+
+#[derive(Clone, Debug)]
+pub struct SplineDynamicTrackFloat {
+    pub track: Vec<f32>,
+    pub knots: Vec<f32>,
+    pub degree: u8,
+}
+
+#[derive(Clone, Debug)]
+pub enum SplineTrackFloat {
+    Static(SplineStaticTrack<f32>),
+    Dynamic(SplineDynamicTrackFloat),
 }

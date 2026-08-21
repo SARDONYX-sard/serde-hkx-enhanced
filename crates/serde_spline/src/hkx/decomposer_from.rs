@@ -3,7 +3,7 @@
 // Reference:
 // - https://github.com/BadDogSkyrim/PyNifly/blob/7fd4644f5a6416c1502983b7d49a853eb0d24509/io_scene_nifly/hkx/skeleton_hkx.py
 use crate::error::Error;
-use crate::spline::SplineDecompressor;
+use crate::spline::SplineData;
 use crate::spline::math::{
     QuantizationType, QuatA16, SplineDynamicTrackQuat, SplineDynamicTrackVector, SplineStaticTrack,
     SplineTrackQuat, SplineTrackType, SplineTrackVector, TransformMask, TransformSplineBlock,
@@ -15,7 +15,7 @@ use super::{Animation, Skeleton};
 const MAX_FRAMES_PER_BLOCK: usize = 256;
 const SPLINE_DEGREE: u8 = 1;
 
-impl SplineDecompressor {
+impl SplineData {
     /// Builds spline-compressed animation blocks from sampled animation frames.
     ///
     /// The generated representation mirrors Soulstruct's

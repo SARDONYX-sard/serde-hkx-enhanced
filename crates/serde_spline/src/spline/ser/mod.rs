@@ -29,7 +29,7 @@ mod debug;
 use havok_types::Vector4;
 
 use super::{
-    SplineDecompressor,
+    SplineData,
     math::{
         QuantizationType, QuatA16, SplineDynamicTrackQuat, SplineDynamicTrackVector,
         SplineTrackQuat, SplineTrackType, SplineTrackVector, TransformMask, TransformSplineBlock,
@@ -48,7 +48,7 @@ pub struct SplineEncodedData {
     pub block_offsets: Vec<u32>,
 }
 
-impl SplineDecompressor {
+impl SplineData {
     /// Encodes all spline blocks into Havok spline-compressed animation data.
     ///
     /// Dynamic tracks are interpreted as sampled frame values and are fitted

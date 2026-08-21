@@ -984,14 +984,11 @@ fn create_animation(
         if frame_count <= 1 {
             return 0;
         }
-
         let seconds = duration as f64 * frame_index as f64 / (frame_count - 1) as f64;
-
         (seconds * 46_186_158_000.0).round() as i64
     }
 
     let stack = unsafe { sys::ufbxw_create_anim_stack(scene) };
-
     let layer = unsafe { sys::ufbxw_create_anim_layer(scene, stack) };
 
     if stack.id == 0 || layer.id == 0 {
@@ -1004,17 +1001,13 @@ fn create_animation(
 
     unsafe {
         sys::ufbxw_anim_stack_set_time_range(scene, stack, 0, duration);
-
         sys::ufbxw_anim_stack_set_reference_time_range(scene, stack, 0, duration);
-
         sys::ufbxw_set_active_anim_stack(scene, stack);
     }
 
     for (bone_index, &node) in nodes.iter().enumerate() {
         let translation = unsafe { sys::ufbxw_node_animate_translation(scene, node, layer) };
-
         let rotation = unsafe { sys::ufbxw_node_animate_rotation(scene, node, layer) };
-
         let scaling = unsafe { sys::ufbxw_node_animate_scaling(scene, node, layer) };
 
         if translation.id == 0 || rotation.id == 0 || scaling.id == 0 {
@@ -1313,40 +1306,12 @@ const fn to_sys_rotation(rotation: &Quaternion) -> sys::ufbxw_quat {
 }
 
 /// Converts a quaternion to XYZ Euler angles in degrees.
-///
-/// # Errors
-///
-/// This function does not return an error.
 fn quaternion_to_euler(rotation: &Quaternion) -> sys::ufbxw_vec3 {
-    let x = rotation.x as f64;
-    let y = rotation.y as f64;
-    let z = rotation.z as f64;
-    let w = rotation.scaler as f64;
-
-    let sin_x_cos_y = 2.0 * y.mul_add(z, w * x);
-
-    let cos_x_cos_y = 2.0f64.mul_add(-y.mul_add(y, x * x), 1.0);
-
-    let roll = sin_x_cos_y.atan2(cos_x_cos_y);
-
-    let sin_y = 2.0 * z.mul_add(-x, w * y);
-
-    let pitch = if sin_y.abs() >= 1.0 {
-        sin_y.signum() * std::f64::consts::FRAC_PI_2
-    } else {
-        sin_y.asin()
-    };
-
-    let sin_z_cos_y = 2.0 * x.mul_add(y, w * z);
-
-    let cos_z_cos_y = 2.0f64.mul_add(-z.mul_add(z, y * y), 1.0);
-
-    let yaw = sin_z_cos_y.atan2(cos_z_cos_y);
-
-    sys::ufbxw_vec3 {
-        x: roll.to_degrees(),
-        y: pitch.to_degrees(),
-        z: yaw.to_degrees(),
+    unsafe {
+        sys::ufbxw_quat_to_euler(
+            to_sys_rotation(rotation),
+            sys::ufbxw_rotation_order_UFBXW_ROTATION_ORDER_XYZ,
+        )
     }
 }
 

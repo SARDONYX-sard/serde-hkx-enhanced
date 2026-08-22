@@ -1098,7 +1098,9 @@ fn vec3_buffer(
     }
 
     let values: Vec<_> = data
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .map(|v| sys::ufbxw_vec3 {
             x: v[0] as f64,
             y: v[1] as f64,
@@ -1132,7 +1134,9 @@ fn vec2_buffer(
     }
 
     let values: Vec<_> = data
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|v| sys::ufbxw_vec2 {
             x: v[0] as f64,
             y: v[1] as f64,

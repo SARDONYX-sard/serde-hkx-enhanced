@@ -28,14 +28,13 @@
 - fbx
   - [x] skeleton + animation.hkx => fbx
   - [x] fbx => skeleton + animation.hkx
-  - [ ] Fill the mesh by specifying .nif
+  - [x] Fill the mesh by specifying .nif
 
 ## build CLI
 
 The following FFI are used here:
 
 - The [`niflib`](https://github.com/niftools/niflib) FFI implemented by cxx for kf
-- The [`ufbx-write`](https://github.com/ufbx/ufbx-write) FFI implemented by cbindgen
 
 ```shell
 git clone --recurse-submodules https://github.com/SARDONYX-sard/serde-hkx-enhanced.git;

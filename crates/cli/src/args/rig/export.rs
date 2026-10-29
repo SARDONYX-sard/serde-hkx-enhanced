@@ -1,5 +1,7 @@
 //! Export Havok HKX animations to KF, FBX, or JSON.
 
+#[cfg(feature = "fbx")]
+use std::collections::HashMap;
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
@@ -13,10 +15,20 @@ use tokio::{fs, task::JoinSet};
 
 use crate::AnyError;
 
+use super::actor::{EXPECTED_TREE, EXTRACT_DIR_NAME, RigArgs, RigResolver};
+#[cfg(feature = "fbx")]
+use super::actor::{
+    NifSource, Rig, TextureMode, externalize_textures, filter_nifs, load_meshes, relative_textures,
+};
 use super::{Output, invalid_input, is_serde_hkx_supported_extension, write_file};
 
-const EXAMPLES: &str = color_print::cstr!(
-    r#"Examples
+const EXAMPLES: &str = r#"Examples
+
+- <blue!>Export a custom animation using the vanilla skeleton, meshes and textures of an actor</blue!>
+  <cyan!>hkxc exportrig --actor</cyan!> cow <cyan!>-a</cyan!> ./myanim.hkx <cyan!>-v</cyan!> fbx
+
+- <blue!>Export a mod's animations, inferring the actor from each path</blue!>
+  <cyan!>hkxc exportrig --auto -a</cyan!> ./MyMod/meshes/actors <cyan!>-o</cyan!> ./out <cyan!>-v</cyan!> fbx
 
 - <blue!>Export a single animation to KF</blue!>
   <cyan!>hkxc exportrig -s</cyan!> ./skeleton.hkx <cyan!>-a</cyan!> ./animations/idle.hkx <cyan!>-v</cyan!> kf
@@ -31,6 +43,9 @@ const EXAMPLES: &str = color_print::cstr!(
   <cyan!>hkxc exportrig -s</cyan!> ./skeleton.hkx <cyan!>-a</cyan!> ./animations/idle.hkx <cyan!>-v</cyan!> kf
   <cyan!>→</cyan!> ./output/idle.kf
   <cyan!>→</cyan!> ./output/idle.annotations.json
+
+- <blue!>Export to FBX with a NIF mesh skinned to the skeleton</blue!>
+  <cyan!>hkxc exportrig -s</cyan!> ./skeleton.hkx <cyan!>-a</cyan!> ./animations/idle.hkx <cyan!>-v</cyan!> fbx <cyan!>--nif</cyan!> ./meshes/body.nif
 
 - <blue!>Export all animations in a directory</blue!>
   <cyan!>hkxc exportrig -s</cyan!> ./skeleton.hkx <cyan!>-a</cyan!> ./animations <cyan!>-v</cyan!> fbx
@@ -57,8 +72,7 @@ Output behavior:
   - A non-existing output path ending in .kf, .fbx, or .json is treated as a file.
   - Other non-existing output paths are treated as directories.
   - JSON output contains the complete Animation, including annotations.
-"#
-);
+"#;
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
 pub enum Format {
@@ -76,7 +90,7 @@ pub enum Format {
 
 impl Format {
     /// Returns the file extension associated with the output format.
-    const fn extension(self) -> &'static str {
+    pub(super) const fn extension(self) -> &'static str {
         match self {
             #[cfg(feature = "kf")]
             Self::Kf => "kf",
@@ -90,11 +104,14 @@ impl Format {
 }
 
 #[derive(Debug, clap::Args)]
-#[clap(arg_required_else_help = true, after_long_help = EXAMPLES)]
+#[clap(arg_required_else_help = true, after_long_help = crate::ui::paint(&format!("{EXAMPLES}\n{EXPECTED_TREE}")))]
 pub(crate) struct Args {
-    /// Skeleton HKX path.
-    #[clap(short = 's', long, value_name = "SKELETON")]
-    pub skeleton: PathBuf,
+    /// Skeleton HKX path. Not needed with --actor or --auto.
+    #[clap(short = 's', long, value_name = "SKELETON", required_unless_present_any = ["actor", "auto"])]
+    pub skeleton: Option<PathBuf>,
+
+    #[clap(flatten)]
+    pub rig: RigArgs,
 
     /// One or more animation HKX files or directories.
     ///
@@ -118,10 +135,36 @@ pub(crate) struct Args {
     #[clap(short = 'n', long)]
     pub no_recursive: bool,
 
-    /// Frames per second used when exporting FBX.
+    /// Scene frame rate written to FBX.
+    ///
+    /// Defaults to the frame rate of each HKX animation, which keeps every key
+    /// on an integer frame in Blender.
     #[cfg(feature = "fbx")]
-    #[clap(long, default_value = "30.0")]
-    pub fps: f32,
+    #[clap(long)]
+    pub fps: Option<f32>,
+
+    /// NIF mesh whose shapes are added to every exported FBX, skinned to the
+    /// skeleton (Skyrim LE/SE). With --actor/--auto the actor's meshes are
+    /// used by default.
+    #[cfg(feature = "fbx")]
+    #[clap(long, value_name = "NIF")]
+    pub nif: Option<PathBuf>,
+
+    /// Do not add meshes to FBX.
+    #[cfg(feature = "fbx")]
+    #[clap(long)]
+    pub no_mesh: bool,
+
+    /// Only use the actor's NIFs whose file name contains this text
+    /// (repeatable), e.g. `--mesh femalebody --mesh femalehands`.
+    #[cfg(feature = "fbx")]
+    #[clap(long, value_name = "NAME")]
+    pub mesh: Vec<String>,
+
+    /// How FBX meshes get their textures.
+    #[cfg(feature = "fbx")]
+    #[clap(long, value_enum, default_value = "embed")]
+    pub textures: TextureMode,
 }
 
 /// Exports Havok HKX animations to KF, FBX, or JSON.
@@ -152,26 +195,14 @@ pub async fn exportrig(args: &Args) -> Result<(), AnyError> {
 
     #[cfg(feature = "fbx")]
     if matches!(args.format, Format::Fbx | Format::FbxAscii)
-        && (!args.fps.is_finite() || args.fps <= 0.0)
+        && args.fps.is_some_and(|fps| !fps.is_finite() || fps <= 0.0)
     {
         return Err(invalid_input("--fps must be a finite value greater than zero").into());
     }
 
-    let skeleton_bytes =
-        fs::read(&args.skeleton)
-            .await
-            .map_err(|source| Error::FailedReadFile {
-                source,
-                path: args.skeleton.clone(),
-            })?;
-
-    let skeleton = Arc::new(Skeleton::from_bytes(
-        &skeleton_bytes,
-        args.skeleton.as_path(),
-    )?);
-
-    if matches!(args.format, Format::Json) {
-        export_skeleton_json(&skeleton, &output).await?;
+    let mut resolver = RigResolver::new(&args.rig, args.skeleton.as_deref())?;
+    if args.skeleton.is_none() {
+        resolver = resolver.with_extract_dir(output_root(args).join(EXTRACT_DIR_NAME));
     }
 
     if let Output::Directory(directory) = &output {
@@ -180,17 +211,46 @@ pub async fn exportrig(args: &Args) -> Result<(), AnyError> {
             .map_err(|source| Error::IoError { source })?;
     }
 
+    // Skeleton (and meshes) per rig, shared by its animations.
+    #[cfg(feature = "fbx")]
+    let mut meshes_by_rig: HashMap<String, Arc<Vec<serde_fbx::ser::Mesh>>> = HashMap::new();
     let mut tasks = JoinSet::new();
+    let mut skeleton_json_written = false;
+    let bar = crate::ui::progress_bar(animations.len() as u64, "Exporting");
 
     for (path, root) in animations {
-        let skeleton = Arc::clone(&skeleton);
+        bar.set_message(format!("resolving skeleton: {}", path.display()));
+        let rig = resolver.resolve(&path)?;
+        let skeleton = Arc::clone(&rig.skeleton);
         let output = output.clone();
         let format = args.format;
 
+        if matches!(args.format, Format::Json) && !skeleton_json_written {
+            export_skeleton_json(&skeleton, &output).await?;
+            skeleton_json_written = true;
+        }
+
         #[cfg(feature = "fbx")]
         let fps = args.fps;
+        #[cfg(feature = "fbx")]
+        let texture_root =
+            (args.textures == TextureMode::External).then(|| texture_root(args, &resolver));
+        #[cfg(feature = "fbx")]
+        let meshes = match meshes_by_rig.get(&rig.id) {
+            Some(meshes) => Arc::clone(meshes),
+            None => {
+                bar.set_message(format!("loading meshes and textures: {}", rig.id));
+                let meshes = Arc::new(rig_meshes(args, &resolver, &rig)?);
+                meshes_by_rig.insert(rig.id.clone(), Arc::clone(&meshes));
+                meshes
+            }
+        };
 
         tasks.spawn(async move {
+            let name = path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default();
             export_animation(
                 &path,
                 root.as_deref(),
@@ -199,16 +259,103 @@ pub async fn exportrig(args: &Args) -> Result<(), AnyError> {
                 format,
                 #[cfg(feature = "fbx")]
                 fps,
+                #[cfg(feature = "fbx")]
+                &meshes,
+                #[cfg(feature = "fbx")]
+                texture_root.as_deref(),
             )
             .await
+            .map(|()| name)
         });
     }
 
     while let Some(result) = tasks.join_next().await {
-        result??;
+        match result {
+            Ok(Ok(name)) => {
+                bar.set_message(name);
+                bar.inc(1);
+            }
+            Ok(Err(error)) => {
+                bar.abandon();
+                return Err(error);
+            }
+            Err(error) => {
+                bar.abandon();
+                return Err(error.into());
+            }
+        }
     }
+    bar.finish_and_clear();
+    crate::ui::info(&format!(
+        "<green>Exported {} animations</green>",
+        bar.position()
+    ));
 
     Ok(())
+}
+
+/// Meshes for FBX output: `--nif`, else the actor's meshes.
+#[cfg(feature = "fbx")]
+fn rig_meshes(
+    args: &Args,
+    resolver: &RigResolver,
+    rig: &Rig,
+) -> Result<Vec<serde_fbx::ser::Mesh>, Error> {
+    if args.no_mesh || !matches!(args.format, Format::Fbx | Format::FbxAscii) {
+        return Ok(Vec::new());
+    }
+    let textures = args.textures != TextureMode::None;
+
+    let mut meshes = if let Some(nif) = &args.nif {
+        // Textures: loose next to the NIF, then the Data directory if any.
+        let data = if textures { resolver.data().ok() } else { None };
+        load_meshes(NifSource::File(nif), data.as_deref(), textures)?
+    } else {
+        let nifs = filter_nifs(&rig.nifs, &args.mesh);
+        if nifs.is_empty() {
+            return Ok(Vec::new());
+        }
+        let data = resolver.data()?;
+        let mut meshes = Vec::new();
+        for nif in &nifs {
+            if let Err(error) = resolver.read_data(nif) {
+                tracing::warn!("skipping mesh {nif}: {error}");
+                continue;
+            }
+            match load_meshes(NifSource::Data(nif), Some(&data), textures) {
+                Ok(mut m) => meshes.append(&mut m),
+                Err(error) => tracing::warn!("skipping mesh {nif}: {error}"),
+            }
+        }
+        meshes
+    };
+
+    if args.textures == TextureMode::External {
+        externalize_textures(&mut meshes, &texture_root(args, resolver))?;
+    }
+    Ok(meshes)
+}
+
+/// Directory receiving `textures/...` with `--textures external`:
+/// the extract directory when used, else the output directory.
+#[cfg(feature = "fbx")]
+fn texture_root(args: &Args, resolver: &RigResolver) -> PathBuf {
+    resolver
+        .extract_dir()
+        .map_or_else(|| output_root(args), Path::to_path_buf)
+}
+
+/// Output directory (the parent of an explicit output file).
+fn output_root(args: &Args) -> PathBuf {
+    let output = args
+        .output
+        .clone()
+        .unwrap_or_else(|| PathBuf::from("output"));
+    if output.extension().is_some() && !output.is_dir() {
+        output.parent().map(Path::to_path_buf).unwrap_or_default()
+    } else {
+        output
+    }
 }
 
 /// Collects animation files from explicit files and directories.
@@ -413,13 +560,19 @@ async fn export_skeleton_json(skeleton: &Skeleton, output: &Output) -> Result<()
 ///
 /// Returns [`AnyError`] if the animation cannot be read or decoded, conversion
 /// or serialization fails, or an output file cannot be written.
+#[cfg_attr(
+    feature = "fbx",
+    expect(clippy::too_many_arguments, reason = "feature-gated FBX options")
+)]
 async fn export_animation(
     input: &Path,
     root: Option<&Path>,
     skeleton: &Skeleton,
     output: &Output,
     format: Format,
-    #[cfg(feature = "fbx")] fps: f32,
+    #[cfg(feature = "fbx")] fps: Option<f32>,
+    #[cfg(feature = "fbx")] meshes: &[serde_fbx::ser::Mesh],
+    #[cfg(feature = "fbx")] texture_root: Option<&Path>,
 ) -> Result<(), AnyError> {
     let bytes = fs::read(input)
         .await
@@ -436,14 +589,46 @@ async fn export_animation(
             .map_err(|source| Error::IoError { source })?;
     }
 
-    let animation = Animation::from_bytes(skeleton, &bytes, input)?;
+    #[cfg(feature = "fbx")]
+    let relative = texture_root.map(|root| relative_textures(meshes, &output_path, root));
+    #[cfg(feature = "fbx")]
+    let meshes = relative.as_deref().unwrap_or(meshes);
+
+    write_animation(
+        &bytes,
+        input,
+        skeleton,
+        &output_path,
+        format,
+        #[cfg(feature = "fbx")]
+        fps,
+        #[cfg(feature = "fbx")]
+        meshes,
+    )
+}
+
+/// Decodes one HKX animation (`bytes`, named `input`) and writes it as `format`.
+///
+/// # Errors
+///
+/// Returns [`AnyError`] if decoding, conversion, or writing fails.
+pub(super) fn write_animation(
+    bytes: &[u8],
+    input: &Path,
+    skeleton: &Skeleton,
+    output_path: &Path,
+    format: Format,
+    #[cfg(feature = "fbx")] fps: Option<f32>,
+    #[cfg(feature = "fbx")] meshes: &[serde_fbx::ser::Mesh],
+) -> Result<(), AnyError> {
+    let animation = Animation::from_bytes(skeleton, bytes, input)?;
 
     match format {
         #[cfg(feature = "kf")]
         Format::Kf => {
-            write_annotations(&animation, &output_path)?;
+            write_annotations(&animation, output_path)?;
             let bytes = niflib_animation::serde_kf::to_kf(animation, skeleton)?;
-            write_file(&output_path, &bytes)?;
+            write_file(output_path, &bytes)?;
         }
 
         #[cfg(feature = "fbx")]
@@ -457,17 +642,22 @@ async fn export_animation(
                     Format::Kf => unreachable!(),
                 },
                 fps,
+                take_name: input.file_stem().map_or_else(
+                    || "Take 001".into(),
+                    |stem| stem.to_string_lossy().into_owned(),
+                ),
+                meshes: meshes.to_vec(),
             };
 
             let bytes = serde_fbx::ser::to_fbx(&animation, skeleton, config)?;
-            write_file(&output_path, &bytes)?;
+            write_file(output_path, &bytes)?;
 
-            write_annotations(&animation, &output_path)?;
+            write_annotations(&animation, output_path)?;
         }
 
         Format::Json => {
             let json = sonic_rs::to_string_pretty(&animation)?;
-            write_file(&output_path, json.as_bytes())?;
+            write_file(output_path, json.as_bytes())?;
         }
     }
 

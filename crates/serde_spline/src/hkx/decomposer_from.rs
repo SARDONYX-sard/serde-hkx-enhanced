@@ -54,9 +54,17 @@ impl SplineDecompressor {
             });
         }
 
-        let mut blocks = Vec::with_capacity(frame_count.div_ceil(MAX_FRAMES_PER_BLOCK));
+        // Adjacent blocks share their boundary frame, so each block advances by
+        // `MAX_FRAMES_PER_BLOCK - 1` frames. This matches `m_numBlocks` and
+        // `m_blockDuration` written in `hkx::ser`.
+        const BLOCK_STRIDE: usize = MAX_FRAMES_PER_BLOCK - 1;
+        let num_blocks = (frame_count.saturating_sub(1))
+            .div_ceil(BLOCK_STRIDE)
+            .max(1);
+        let mut blocks = Vec::with_capacity(num_blocks);
 
-        for block_start in (0..frame_count).step_by(MAX_FRAMES_PER_BLOCK) {
+        for block_index in 0..num_blocks {
+            let block_start = block_index * BLOCK_STRIDE;
             let block_end = (block_start + MAX_FRAMES_PER_BLOCK).min(frame_count);
             let block_frame_count = block_end - block_start;
 

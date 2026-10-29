@@ -6,8 +6,7 @@ use serde_hkx_features::{
 use std::path::{Path, PathBuf};
 
 /// ANSI color representation command examples.
-pub const EXAMPLES: &str = color_print::cstr!(
-    r#"In case of error, dir and file behave differently
+pub const EXAMPLES: &str = r#"In case of error, dir and file behave differently
     - dir: All error paths are displayed
     - file: Error path + diff displayed
 
@@ -17,11 +16,10 @@ pub const EXAMPLES: &str = color_print::cstr!(
 
 - <blue!>Test the reproducibility of hkx files</blue!>
   <cyan!>./hkxc verify</cyan!> ./input --log-level info --log-file "./verify_inputs.log"
-"#
-);
+"#;
 
 #[derive(Debug, clap::Args)]
-#[clap(arg_required_else_help = true, after_long_help = EXAMPLES)]
+#[clap(arg_required_else_help = true, after_long_help = crate::ui::paint(EXAMPLES))]
 pub(crate) struct Args {
     /// hkx file path or dir for which you want to verify reproducibility. It is recommended to use log in INFO mode.
     pub path: PathBuf,
@@ -39,10 +37,10 @@ where
     if path.is_file() {
         println!("Verifying...");
         verify_file(path, color).map(|_| {
-            color_print::cprintln!(
+            crate::ui::info(&format!(
                 "<green>Complete hkx reproduction: {}</green>",
-                path.display()
-            );
+                crate::ui::escape(&path.display().to_string())
+            ));
         })
     } else {
         verify_dir(path, CliProgressHandler::new())

@@ -1,8 +1,7 @@
 use std::path::PathBuf;
 
 /// ANSI color representation command examples.
-pub const EXAMPLES: &str = color_print::cstr!(
-    r#"<blue><bold><underline>Examples</underline></bold></blue>
+pub const EXAMPLES: &str = r#"<blue><bold><underline>Examples</underline></bold></blue>
 - <blue!>XML diff -> stdout</blue!>
   <cyan!>hkxc diff</cyan!> ./defaultmale_by_hkxcmd.xml ./defaultmale_by_HavokBehaviorProcess.xml
 
@@ -11,11 +10,10 @@ pub const EXAMPLES: &str = color_print::cstr!(
 
 - <blue!>hexdump diff -> a file</blue!>
   <cyan!>hkxc diff</cyan!> ./defaultmale_x86_hexdump.txt ./defaultmale_x64_hexdump.txt <cyan!>-o</cyan!> diff.txt
-"#
-);
+"#;
 
 #[derive(Debug, clap::Args)]
-#[clap(arg_required_else_help = true, after_long_help = EXAMPLES)]
+#[clap(arg_required_else_help = true, after_long_help = crate::ui::paint(EXAMPLES))]
 pub(crate) struct Args {
     /// Old path
     pub old: PathBuf,

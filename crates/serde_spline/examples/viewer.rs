@@ -521,7 +521,7 @@ fn timeline_ui(ui: &mut egui::Ui, time: &mut f64, duration: f64, num_frames: usi
     if duration > 0.0 && num_frames > 1 {
         for frame in 0..num_frames {
             let t = frame as f32 / (num_frames - 1) as f32;
-            let x = rect.left() + t * rect.width();
+            let x = t.mul_add(rect.width(), rect.left());
 
             painter.line_segment(
                 [
@@ -542,7 +542,7 @@ fn timeline_ui(ui: &mut egui::Ui, time: &mut f64, duration: f64, num_frames: usi
 
     if duration > 0.0 {
         let frac = (*time / duration).clamp(0.0, 1.0) as f32;
-        let x = rect.left() + frac * rect.width();
+        let x = frac.mul_add(rect.width(), rect.left());
 
         painter.line_segment(
             [egui::pos2(x, rect.top()), egui::pos2(x, rect.bottom())],

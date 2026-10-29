@@ -10,12 +10,18 @@ use serde_hkx_features::{Format, error::Error};
 use serde_spline::hkx::{Animation, AnimationAnnotation, Skeleton, ser::to_hkx};
 use tokio::{fs, task::JoinSet};
 
+use super::actor::{EXPECTED_TREE, RigArgs, RigResolver};
 use super::{invalid_input, write_file};
 
 use crate::{AnyError, args::rig::Output};
 
-const EXAMPLES: &str = color_print::cstr!(
-    r#"Examples
+const EXAMPLES: &str = r#"Examples
+
+- <blue!>Import an FBX animation using the vanilla skeleton of an actor</blue!>
+  <cyan!>hkxc importrig --actor</cyan!> cow <cyan!>-a</cyan!> ./myanim.fbx
+
+- <blue!>Import a mod tree, inferring the actor from each path</blue!>
+  <cyan!>hkxc importrig --auto -a</cyan!> ./MyMod/meshes/actors <cyan!>-o</cyan!> ./out
 
 - <blue!>Import a KF animation</blue!>
   <cyan!>hkxc importrig -s</cyan!> ./skeleton.hkx <cyan!>-a</cyan!> ./idle.kf <cyan!>-v</cyan!> amd64
@@ -65,15 +71,17 @@ Output behavior:
   - A single animation may use any explicit output file path.
   - Multiple animations require an output directory.
   - Directory inputs preserve their relative path structure.
-"#
-);
+"#;
 
 #[derive(Debug, clap::Args)]
-#[clap(arg_required_else_help = true, after_long_help = EXAMPLES)]
+#[clap(arg_required_else_help = true, after_long_help = crate::ui::paint(&format!("{EXAMPLES}\n{EXPECTED_TREE}")))]
 pub(crate) struct Args {
-    /// Input skeleton HKX file.
-    #[clap(short = 's', long, value_name = "SKELETON")]
-    pub skeleton: PathBuf,
+    /// Input skeleton HKX file. Not needed with --actor or --auto.
+    #[clap(short = 's', long, value_name = "SKELETON", required_unless_present_any = ["actor", "auto"])]
+    pub skeleton: Option<PathBuf>,
+
+    #[clap(flatten)]
+    pub rig: RigArgs,
 
     /// One or more KF, FBX, or JSON animation files or directories.
     ///
@@ -138,19 +146,8 @@ pub async fn importrig(args: &Args) -> Result<(), AnyError> {
         has_directory_input,
     )?;
 
-    let skeleton_bytes =
-        fs::read(&args.skeleton)
-            .await
-            .map_err(|source| Error::FailedReadFile {
-                source,
-                path: args.skeleton.clone(),
-            })?;
-
     // NOTE: `Skeleton::from_bytes` is intended for `hkx` and XML.
-    let skeleton = Arc::new(Skeleton::from_bytes(
-        &skeleton_bytes,
-        args.skeleton.as_path(),
-    )?);
+    let mut resolver = RigResolver::new(&args.rig, args.skeleton.as_deref())?;
 
     if let Output::Directory(directory) = &output {
         fs::create_dir_all(directory)
@@ -159,21 +156,48 @@ pub async fn importrig(args: &Args) -> Result<(), AnyError> {
     }
 
     let mut tasks = JoinSet::new();
+    let bar = crate::ui::progress_bar(animations.len() as u64, "Importing");
 
     for animation in animations {
-        let skeleton = Arc::clone(&skeleton);
+        bar.set_message(format!("resolving skeleton: {}", animation.path.display()));
+        let skeleton: Arc<Skeleton> = Arc::clone(&resolver.resolve(&animation.path)?.skeleton);
         let output = output.clone();
         let fps = args.fps;
         let format = args.format;
 
-        tasks.spawn(
-            async move { import_animation(&animation, &skeleton, &output, fps, format).await },
-        );
+        tasks.spawn(async move {
+            let name = animation
+                .path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            import_animation(&animation, &skeleton, &output, fps, format)
+                .await
+                .map(|()| name)
+        });
     }
 
     while let Some(result) = tasks.join_next().await {
-        result??;
+        match result {
+            Ok(Ok(name)) => {
+                bar.set_message(name);
+                bar.inc(1);
+            }
+            Ok(Err(error)) => {
+                bar.abandon();
+                return Err(error);
+            }
+            Err(error) => {
+                bar.abandon();
+                return Err(error.into());
+            }
+        }
     }
+    bar.finish_and_clear();
+    crate::ui::info(&format!(
+        "<green>Imported {} animations</green>",
+        bar.position()
+    ));
 
     Ok(())
 }
@@ -227,7 +251,7 @@ fn resolve_animations(inputs: &[PathBuf]) -> Result<(Vec<AnimationInput>, bool),
 
                 let path = entry.path();
 
-                if !is_animation_extension(&path) {
+                if !is_animation_extension(&path) || is_sidecar_json(&path) {
                     continue;
                 }
 
@@ -260,6 +284,14 @@ fn is_animation_extension(path: &Path) -> bool {
                 || extension.eq_ignore_ascii_case("fbx")
                 || extension.eq_ignore_ascii_case("json")
         })
+}
+
+/// JSON files written next to animations by `exportrig` that are not
+/// animations themselves: `*.annotations.json` and `skeleton.json`.
+fn is_sidecar_json(path: &Path) -> bool {
+    path.file_name()
+        .map(|name| name.to_string_lossy().to_ascii_lowercase())
+        .is_some_and(|name| name.ends_with(".annotations.json") || name == "skeleton.json")
 }
 
 /// Resolves an animation input to its output path.
@@ -510,6 +542,13 @@ mod tests {
     fn is_animation_extension_rejects_unknown_extension() {
         assert!(!is_animation_extension(Path::new("idle.hkx")));
         assert!(!is_animation_extension(Path::new("idle.txt")));
+    }
+
+    #[test]
+    fn sidecar_json_is_skipped() {
+        assert!(is_sidecar_json(Path::new("out/idle.annotations.json")));
+        assert!(is_sidecar_json(Path::new("out/skeleton.json")));
+        assert!(!is_sidecar_json(Path::new("out/idle.json")));
     }
 
     #[test]

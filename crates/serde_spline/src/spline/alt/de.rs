@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: (C) 2016-2023 Lukas Cone
-// SPDX-License-Identifier: GPL-3.0
+// SPDX-License-Identifier: GPL-3.0-or-later
 //
 // ref: https://github.com/PredatorCZ/HavokLib/blob/master/source/hka_spline_decompressor.cpp
 // ref: https://github.com/lennart99v/SageHavokEditor/blob/988ee1c25e3fe8f35b8ac43d4494331156b16147/SkyrimHavokEditor/Core/Animation/HavokSplineDecoder.cs
@@ -442,10 +442,10 @@ impl RawQuat {
             wb = -wb;
         }
         Self::new(
-            wa * a.x + wb * b.x,
-            wa * a.y + wb * b.y,
-            wa * a.z + wb * b.z,
-            wa * a.w + wb * b.w,
+            wb.mul_add(b.x, wa * a.x),
+            wb.mul_add(b.y, wa * a.y),
+            wb.mul_add(b.z, wa * a.z),
+            wb.mul_add(b.w, wa * a.w),
         )
     }
 }
@@ -479,18 +479,18 @@ fn read_quat_polar32(input: &mut &[u8]) -> ModalResult<RawQuat> {
     const R_MASK: u32 = (1 << 10) - 1;
     const R_FRAC: f32 = 1.0 / R_MASK as f32;
     let r_raw = ((c >> 18) & R_MASK) as f32 * R_FRAC;
-    let mut w = 1.0 - r_raw * r_raw;
+    let mut w = r_raw.mul_add(-r_raw, 1.0);
 
     let phi_theta = (c & 0x0003_FFFF) as f32;
     let phi_int = phi_theta.sqrt().floor();
     let (theta, phi_rad) = if phi_int > 0.0 {
-        let t = FRAC_PI_4 * (phi_theta - phi_int * phi_int) / phi_int;
+        let t = FRAC_PI_4 * phi_int.mul_add(-phi_int, phi_theta) / phi_int;
         (t, phi_int * (FRAC_PI_2 / 511.0))
     } else {
         (0.0_f32, 0.0_f32)
     };
 
-    let mag = (1.0 - w * w).sqrt();
+    let mag = w.mul_add(-w, 1.0).sqrt();
     let mut x = phi_rad.sin() * theta.cos() * mag;
     let mut y = phi_rad.sin() * theta.sin() * mag;
     let mut z = phi_rad.cos() * mag;
@@ -541,7 +541,9 @@ fn read_quat_three_comp48(input: &mut &[u8]) -> ModalResult<RawQuat> {
     let fz = ((raw_z & MASK) - (MASK >> 1)) as f32 * FRACTAL;
 
     let mut out = scatter3_to4(fx, fy, fz, result_shift);
-    let mut w = (1.0 - (fx * fx + fy * fy + fz * fz)).max(0.0).sqrt();
+    let mut w = (1.0 - fz.mul_add(fz, fy.mul_add(fy, fx * fx)))
+        .max(0.0)
+        .sqrt();
     if r_sign {
         w = -w;
     }

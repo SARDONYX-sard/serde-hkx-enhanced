@@ -24,6 +24,7 @@ use std::{io, path::PathBuf};
 
 pub(crate) async fn run(args: Args) -> Result<(), AnyError> {
     crate::logger::init(args.log_file, args.log_level, args.stdout)?;
+    crate::ui::set_quiet(args.quiet);
 
     // For drag & drop
     if let Some(input) = args.input {
@@ -51,6 +52,13 @@ pub(crate) async fn run(args: Args) -> Result<(), AnyError> {
             SubCommands::ImportRig(args) => Ok(rig::import::importrig(&args).await?),
             #[cfg(any(feature = "kf", feature = "fbx"))]
             SubCommands::ExportRig(args) => Ok(rig::export::exportrig(&args).await?),
+            #[cfg(any(feature = "kf", feature = "fbx"))]
+            SubCommands::ExportAll(args) => {
+                Ok(
+                    tokio::task::spawn_blocking(move || rig::export_all::export_all(&args))
+                        .await??,
+                )
+            }
 
             SubCommands::Completions { shell } => {
                 shell.generate(&mut Args::command(), &mut io::stdout());
@@ -59,12 +67,8 @@ pub(crate) async fn run(args: Args) -> Result<(), AnyError> {
         }
     } else {
         Args::command().print_long_help()?;
-        pub const ERR_MSG: &str = color_print::cstr!(
-            r#"
-<red>error:</red> '<red>hkxc</red>' requires a subcommand or hkx/xml path.
-For more information, try '<cyan!>--help</cyan!>'.
-"#
-        );
+        const ERR_MSG: &str =
+            "'hkxc' requires a subcommand or hkx/xml path.\nFor more information, try '--help'.";
         Err(Error::IoError {
             source: io::Error::new(io::ErrorKind::InvalidInput, ERR_MSG),
         }
@@ -76,7 +80,7 @@ For more information, try '<cyan!>--help</cyan!>'.
 #[derive(Debug, clap::Parser)]
 #[clap(version, about, author)]
 #[cfg_attr(feature = "color", clap(styles=get_styles()))]
-#[clap(arg_required_else_help = true, args_conflicts_with_subcommands = true, after_long_help = convert::EXAMPLES)]
+#[clap(arg_required_else_help = true, args_conflicts_with_subcommands = true, after_long_help = crate::ui::paint(convert::EXAMPLES))]
 pub(crate) struct Args {
     /// The path of the target for drag and drop hkx(64bit) <-> xml conversion (The converted file will be created in the same location)
     pub input: Option<PathBuf>,
@@ -95,6 +99,10 @@ pub(crate) struct Args {
     #[clap(global = true, long, display_order = 102)]
     /// Output path of log file
     pub log_file: Option<PathBuf>,
+
+    /// Do not show progress bars or informational messages (errors are still shown).
+    #[clap(global = true, short, long, display_order = 99)]
+    pub quiet: bool,
 }
 
 #[derive(Debug, clap::Parser)]
@@ -123,6 +131,11 @@ pub(crate) enum SubCommands {
     /// Export Havok HKX animations to KF or FBX animations.
     #[clap(name = "exportrig")]
     ExportRig(rig::export::Args),
+
+    #[cfg(any(feature = "kf", feature = "fbx"))]
+    /// Export every actor animation of a Skyrim Data directory (loose files + BSA).
+    #[clap(name = "exportall")]
+    ExportAll(rig::export_all::Args),
 
     /// Generate shell completions
     #[clap(arg_required_else_help = true)]

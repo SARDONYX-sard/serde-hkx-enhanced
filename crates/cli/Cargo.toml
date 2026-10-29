@@ -17,7 +17,6 @@ rust-version.workspace = true
 [dependencies]
 clap = { workspace = true } # For CLI
 clap_complete_command = "0.6.1" # Generate auto completion
-color-print = "0.3.7" # To color example help
 indicatif = { version = "0.18.6", features = ["rayon"] } # CLI progress bar
 jwalk = { workspace = true }
 mimalloc = { version = "0.1.50", optional = true }
@@ -34,11 +33,11 @@ tracing = { workspace = true }
 tracing-subscriber = "0.3.20"
 
 # workspace members
-niflib_animation = { path = "../niflib_animation", features = [
-  "tracing",
-], optional = true }
-serde_fbx = { path = "../serde_fbx", features = ["tracing"], optional = true }
-serde_spline = { path = "../serde_spline" }
+niflib_animation = { workspace = true, features = ["tracing"], optional = true }
+serde_fbx = { workspace = true, features = ["tracing"], optional = true }
+serde_bsa = { workspace = true }
+serde_nif = { workspace = true, optional = true }
+serde_spline = { workspace = true }
 
 
 [build-dependencies]
@@ -59,7 +58,7 @@ color = []
 extra_fmt = ["serde_hkx_features/extra_fmt"]
 
 kf = ["dep:niflib_animation"]
-fbx = ["dep:serde_fbx"]
+fbx = ["dep:serde_fbx", "dep:serde_nif"]
 
 # The patch time was reduced by 4secs.
 mimalloc = ["dep:mimalloc"]

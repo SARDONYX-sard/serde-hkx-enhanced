@@ -101,7 +101,8 @@ pub fn parse(bytes: &[u8]) -> Result<Vec<Element>, Error> {
     if bytes.starts_with(BINARY_MAGIC) {
         BinaryReader::new(bytes).parse()
     } else {
-        let text = std::str::from_utf8(bytes).map_err(|_| load_error("not a binary FBX and not UTF-8 text"))?;
+        let text = std::str::from_utf8(bytes)
+            .map_err(|_| load_error("not a binary FBX and not UTF-8 text"))?;
         AsciiParser::new(text).parse()
     }
 }
@@ -235,9 +236,9 @@ impl<'a> BinaryReader<'a> {
                 Value::Raw(self.take(len)?.to_vec())
             }
             b'b' => Value::I64Array(self.array_values(1, |b| i64::from(b[0]))?),
-            b'i' => Value::I64Array(
-                self.array_values(4, |b| i64::from(i32::from_le_bytes([b[0], b[1], b[2], b[3]])))?,
-            ),
+            b'i' => Value::I64Array(self.array_values(4, |b| {
+                i64::from(i32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+            })?),
             b'l' => Value::I64Array(self.array_values(8, |b| {
                 i64::from_le_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]])
             })?),
@@ -257,7 +258,11 @@ impl<'a> BinaryReader<'a> {
         })
     }
 
-    fn array_values<T>(&mut self, stride: usize, decode: impl Fn(&[u8]) -> T) -> Result<Vec<T>, Error> {
+    fn array_values<T>(
+        &mut self,
+        stride: usize,
+        decode: impl Fn(&[u8]) -> T,
+    ) -> Result<Vec<T>, Error> {
         let count = self.u32()? as usize;
         let encoding = self.u32()?;
         let len = self.u32()? as usize;
@@ -464,7 +469,8 @@ fn tokenize(text: &str) -> Vec<Token<'_>> {
             _ if c.is_ascii_whitespace() => i += 1,
             _ => {
                 let start = i;
-                while i < bytes.len() && !matches!(bytes[i], b',' | b'{' | b'}' | b':' | b'"' | b';')
+                while i < bytes.len()
+                    && !matches!(bytes[i], b',' | b'{' | b'}' | b':' | b'"' | b';')
                     && !bytes[i].is_ascii_whitespace()
                 {
                     i += 1;
@@ -473,7 +479,9 @@ fn tokenize(text: &str) -> Vec<Token<'_>> {
                 if i < bytes.len() && bytes[i] == b':' {
                     tokens.push(Token::Key(word));
                     i += 1;
-                } else if word.starts_with(|c: char| c.is_ascii_digit() || c == '-' || c == '+' || c == '.') {
+                } else if word
+                    .starts_with(|c: char| c.is_ascii_digit() || c == '-' || c == '+' || c == '.')
+                {
                     tokens.push(Token::Number(word));
                 } else if word.is_empty() {
                     i += 1; // stray ':'
@@ -499,6 +507,9 @@ mod tests {
         assert_eq!(model.props[0], Value::I64(1));
         assert_eq!(model.props[1].as_str(), Some("Model::Pelvis"));
         assert_eq!(model.child("Shading").unwrap().props[0], Value::Bool(true));
-        assert_eq!(model.child("KeyTime").unwrap().props[0], Value::I64Array(vec![0, 10]));
+        assert_eq!(
+            model.child("KeyTime").unwrap().props[0],
+            Value::I64Array(vec![0, 10])
+        );
     }
 }

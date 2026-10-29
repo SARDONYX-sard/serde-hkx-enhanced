@@ -66,7 +66,11 @@ pub fn from_fbx(bytes: &[u8], skeleton: &Skeleton, config: Config) -> Result<Vec
 ///
 /// # Errors
 /// See [`from_fbx`].
-pub fn fbx_to_animation(bytes: &[u8], skeleton: &Skeleton, config: Config) -> Result<Animation, Error> {
+pub fn fbx_to_animation(
+    bytes: &[u8],
+    skeleton: &Skeleton,
+    config: Config,
+) -> Result<Animation, Error> {
     let Config {
         annotations,
         fps,
@@ -94,25 +98,33 @@ fn validate_fps(fps: f32) -> Result<(), Error> {
 fn build_bone_mapping(scene: &Scene, skeleton: &Skeleton) -> Result<Vec<i64>, Error> {
     let mut models_by_name: HashMap<&str, Vec<i64>> = HashMap::new();
     for (&id, model) in &scene.models {
-        models_by_name.entry(model.name.as_str()).or_default().push(id);
+        models_by_name
+            .entry(model.name.as_str())
+            .or_default()
+            .push(id);
     }
 
     skeleton
         .bones
         .iter()
-        .map(|bone| match models_by_name.get(bone.name.as_str()).map(Vec::as_slice) {
-            Some([id]) => Ok(*id),
-            Some(_) => Err(Error::DuplicateBone {
-                name: bone.name.clone(),
-            }),
-            None => Err(Error::BoneNotFound {
-                name: bone.name.clone(),
-            }),
-        })
+        .map(
+            |bone| match models_by_name.get(bone.name.as_str()).map(Vec::as_slice) {
+                Some([id]) => Ok(*id),
+                Some(_) => Err(Error::DuplicateBone {
+                    name: bone.name.clone(),
+                }),
+                None => Err(Error::BoneNotFound {
+                    name: bone.name.clone(),
+                }),
+            },
+        )
         .collect()
 }
 
-fn select_animation<'a>(scene: &'a Scene, requested_name: Option<&str>) -> Result<&'a AnimStack, Error> {
+fn select_animation<'a>(
+    scene: &'a Scene,
+    requested_name: Option<&str>,
+) -> Result<&'a AnimStack, Error> {
     #[cfg(feature = "tracing")]
     for (index, stack) in scene.stacks.iter().enumerate() {
         tracing::debug!(
@@ -171,7 +183,10 @@ fn sample_animation(
     }
 
     // Round away f32 noise so that e.g. 1.5s * 30fps is 45 intervals, not 46.
-    let intervals = f64::from(duration).mul_add(f64::from(fps), -1.0e-4).ceil().max(0.0) as u32;
+    let intervals = f64::from(duration)
+        .mul_add(f64::from(fps), -1.0e-4)
+        .ceil()
+        .max(0.0) as u32;
     let num_frames = intervals + 1;
 
     #[cfg(feature = "tracing")]
@@ -182,10 +197,15 @@ fn sample_animation(
     // scale 10 and a -90° X rotation), which do not affect local transforms.
     let frames = (0..num_frames)
         .map(|frame| {
-            let time = begin + (f64::from(frame) / f64::from(fps) * KTIME_PER_SECOND).round() as i64;
+            let time =
+                begin + (f64::from(frame) / f64::from(fps) * KTIME_PER_SECOND).round() as i64;
             let transforms = models
                 .iter()
-                .map(|&model| scene.local_transform(model, Some(stack), time.min(end)).to_qs_transform())
+                .map(|&model| {
+                    scene
+                        .local_transform(model, Some(stack), time.min(end))
+                        .to_qs_transform()
+                })
                 .collect();
             AnimationFrame { transforms }
         })

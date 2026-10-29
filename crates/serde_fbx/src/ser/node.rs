@@ -194,13 +194,8 @@ impl Properties70 {
     }
 
     fn p(&mut self, name: &str, ty: &str, label: &str, flags: &str) -> &mut Node {
-        self.0.push(
-            Node::new("P")
-                .prop(name)
-                .prop(ty)
-                .prop(label)
-                .prop(flags),
-        );
+        self.0
+            .push(Node::new("P").prop(name).prop(ty).prop(label).prop(flags));
         #[allow(clippy::unwrap_used)] // Just pushed.
         self.0.children.last_mut().unwrap()
     }
@@ -219,7 +214,9 @@ impl Properties70 {
 
     #[must_use]
     pub fn double(mut self, name: &str, value: f64) -> Self {
-        self.p(name, "double", "Number", "").props.push(value.into());
+        self.p(name, "double", "Number", "")
+            .props
+            .push(value.into());
         self
     }
 
@@ -251,7 +248,14 @@ impl Properties70 {
 
     /// Arbitrary entry: `P: name, ty, label, flags, values...`.
     #[must_use]
-    pub fn entry(mut self, name: &str, ty: &str, label: &str, flags: &str, values: impl IntoIterator<Item = Property>) -> Self {
+    pub fn entry(
+        mut self,
+        name: &str,
+        ty: &str,
+        label: &str,
+        flags: &str,
+        values: impl IntoIterator<Item = Property>,
+    ) -> Self {
         self.p(name, ty, label, flags).props.extend(values);
         self
     }
@@ -505,7 +509,10 @@ mod tests {
         let end_offset = u32::from_le_bytes(bytes[start..start + 4].try_into().unwrap());
         // header(13) + "A"(1) + I(5) + child(13 + 1 + 6) + null(13)
         assert_eq!(end_offset as usize, start + 13 + 1 + 5 + 20 + 13);
-        assert_eq!(&bytes[end_offset as usize..end_offset as usize + 13], &NULL_RECORD);
+        assert_eq!(
+            &bytes[end_offset as usize..end_offset as usize + 13],
+            &NULL_RECORD
+        );
     }
 
     #[test]

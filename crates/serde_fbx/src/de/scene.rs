@@ -49,7 +49,10 @@ impl Properties {
         if let Some(element) = element.and_then(|e| e.child("Properties70")) {
             for p in element.children_named("P") {
                 if let Some(name) = p.prop(0).and_then(Value::as_str) {
-                    map.insert(name.to_owned(), p.props.get(4..).unwrap_or_default().to_vec());
+                    map.insert(
+                        name.to_owned(),
+                        p.props.get(4..).unwrap_or_default().to_vec(),
+                    );
                 }
             }
         }
@@ -75,7 +78,9 @@ impl PropertyLookup<'_> {
     fn vec3(&self, name: &str, default: [f64; 3]) -> [f64; 3] {
         self.values(name)
             .filter(|v| v.len() >= 3)
-            .map_or(default, |v| core::array::from_fn(|i| v[i].as_f64().unwrap_or(default[i])))
+            .map_or(default, |v| {
+                core::array::from_fn(|i| v[i].as_f64().unwrap_or(default[i]))
+            })
     }
 
     fn int(&self, name: &str, default: i64) -> i64 {
@@ -206,7 +211,12 @@ impl Scene {
                 }
                 "AnimationStack" => {
                     let props = Properties::from_element(Some(object));
-                    let ktime = |name: &str| props.get(name).and_then(|v| v.first()).and_then(Value::as_i64);
+                    let ktime = |name: &str| {
+                        props
+                            .get(name)
+                            .and_then(|v| v.first())
+                            .and_then(Value::as_i64)
+                    };
                     scene.stacks.push(AnimStack {
                         name,
                         layers: Vec::new(),
@@ -219,14 +229,21 @@ impl Scene {
                     let props = Properties::from_element(Some(object));
                     let mut node = CurveNode::default();
                     for (i, channel) in ["d|X", "d|Y", "d|Z"].into_iter().enumerate() {
-                        node.defaults[i] = props.get(channel).and_then(|v| v.first()).and_then(Value::as_f64);
+                        node.defaults[i] = props
+                            .get(channel)
+                            .and_then(|v| v.first())
+                            .and_then(Value::as_f64);
                     }
                     scene.curve_nodes.insert(id, node);
                 }
                 "AnimationCurve" => {
                     let array = |name: &str| object.child(name).and_then(|e| e.prop(0));
-                    let times = array("KeyTime").and_then(Value::to_i64_vec).unwrap_or_default();
-                    let values = array("KeyValueFloat").and_then(Value::to_f64_vec).unwrap_or_default();
+                    let times = array("KeyTime")
+                        .and_then(Value::to_i64_vec)
+                        .unwrap_or_default();
+                    let values = array("KeyValueFloat")
+                        .and_then(Value::to_f64_vec)
+                        .unwrap_or_default();
                     let len = times.len().min(values.len());
                     scene.curves.insert(
                         id,
@@ -298,7 +315,11 @@ impl Scene {
         range
     }
 
-    fn stack_curves<'a>(&'a self, stack: &'a AnimStack, models: &'a [i64]) -> impl Iterator<Item = &'a Curve> {
+    fn stack_curves<'a>(
+        &'a self,
+        stack: &'a AnimStack,
+        models: &'a [i64],
+    ) -> impl Iterator<Item = &'a Curve> {
         models
             .iter()
             .filter_map(|id| self.models.get(id))
@@ -343,7 +364,9 @@ impl Scene {
                 let Some(node) = self.curve_nodes.get(node_id) else {
                     continue;
                 };
-                for ((value, curve), default) in target.iter_mut().zip(node.curves).zip(node.defaults) {
+                for ((value, curve), default) in
+                    target.iter_mut().zip(node.curves).zip(node.defaults)
+                {
                     if let Some(curve) = curve.and_then(|id| self.curves.get(&id)) {
                         *value = curve.evaluate(time);
                     } else if let Some(default) = default {

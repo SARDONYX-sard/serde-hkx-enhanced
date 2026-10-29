@@ -54,7 +54,10 @@ pub(crate) async fn run(args: Args) -> Result<(), AnyError> {
             SubCommands::ExportRig(args) => Ok(rig::export::exportrig(&args).await?),
             #[cfg(any(feature = "kf", feature = "fbx"))]
             SubCommands::ExportAll(args) => {
-                Ok(tokio::task::spawn_blocking(move || rig::export_all::export_all(&args)).await??)
+                Ok(
+                    tokio::task::spawn_blocking(move || rig::export_all::export_all(&args))
+                        .await??,
+                )
             }
 
             SubCommands::Completions { shell } => {

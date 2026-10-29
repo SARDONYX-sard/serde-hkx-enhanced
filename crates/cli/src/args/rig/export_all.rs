@@ -8,12 +8,12 @@ use serde_spline::hkx::Skeleton;
 
 use crate::{AnyError, ui};
 
+use super::actor::{
+    Actor, EXPECTED_TREE, EXTRACT_DIR_NAME, RigArgs, RigResolver, discover_actors, find_actor,
+};
 #[cfg(feature = "fbx")]
 use super::actor::{
     NifSource, TextureMode, externalize_textures, filter_nifs, load_meshes, relative_textures,
-};
-use super::actor::{
-    Actor, EXPECTED_TREE, EXTRACT_DIR_NAME, RigArgs, RigResolver, discover_actors, find_actor,
 };
 use super::export::{Format, write_animation};
 
@@ -61,7 +61,13 @@ pub(crate) struct Args {
     pub output: PathBuf,
 
     /// Output format.
-    #[clap(short = 'v', long, value_enum, value_name = "FORMAT", default_value = "fbx")]
+    #[clap(
+        short = 'v',
+        long,
+        value_enum,
+        value_name = "FORMAT",
+        default_value = "fbx"
+    )]
     pub format: Format,
 
     /// Scene frame rate written to FBX (default: the frame rate of each animation).
@@ -153,7 +159,11 @@ pub fn export_all(args: &Args) -> Result<(), AnyError> {
     let exporting = ui::progress_bar(total as u64, "Exporting");
     let results: Vec<Result<(), String>> = jobs
         .par_iter()
-        .flat_map(|job| job.animations.par_iter().map(move |animation| (job, animation)))
+        .flat_map(|job| {
+            job.animations
+                .par_iter()
+                .map(move |animation| (job, animation))
+        })
         .map(|(job, (path, relative))| {
             exporting.set_message(format!("{}/{relative}", job.id));
             let result = export_one(args, &resolver, &extract_dir, job, path, relative);
@@ -173,7 +183,11 @@ pub fn export_all(args: &Args) -> Result<(), AnyError> {
         "<green>Exported {exported} animations</green> to '{}' ({} failed{})",
         ui::escape(&args.output.display().to_string()),
         failed.len(),
-        if failed.is_empty() { "" } else { ", see the log with --stdout --log-level warn" }
+        if failed.is_empty() {
+            ""
+        } else {
+            ", see the log with --stdout --log-level warn"
+        }
     ));
 
     if exported == 0 && !failed.is_empty() {
@@ -203,29 +217,36 @@ fn prepare_actor(
     actor: &Actor,
     #[cfg_attr(not(feature = "fbx"), expect(unused_variables))] extract_dir: &Path,
 ) -> Result<ActorJob, String> {
-    let bytes = resolver.read_data(&actor.skeleton).map_err(|e| e.to_string())?;
+    let bytes = resolver
+        .read_data(&actor.skeleton)
+        .map_err(|e| e.to_string())?;
     let skeleton = Skeleton::from_bytes(&bytes, Path::new(&actor.skeleton))
         .map_err(|error| format!("{}: {error}", actor.skeleton))?;
 
     #[cfg(feature = "fbx")]
     let meshes = {
-        let mut meshes: Vec<_> = if args.no_mesh || !matches!(args.format, Format::Fbx | Format::FbxAscii) {
-            Vec::new()
-        } else {
-            filter_nifs(&actor.nifs, &args.mesh)
-                .iter()
-                .filter_map(|nif| {
-                    resolver
-                        .read_data(nif)
-                        .map_err(|error| tracing::warn!("skipping mesh {nif}: {error}"))
-                        .ok()?;
-                    load_meshes(NifSource::Data(nif), Some(data), args.textures != TextureMode::None)
+        let mut meshes: Vec<_> =
+            if args.no_mesh || !matches!(args.format, Format::Fbx | Format::FbxAscii) {
+                Vec::new()
+            } else {
+                filter_nifs(&actor.nifs, &args.mesh)
+                    .iter()
+                    .filter_map(|nif| {
+                        resolver
+                            .read_data(nif)
+                            .map_err(|error| tracing::warn!("skipping mesh {nif}: {error}"))
+                            .ok()?;
+                        load_meshes(
+                            NifSource::Data(nif),
+                            Some(data),
+                            args.textures != TextureMode::None,
+                        )
                         .map_err(|error| tracing::warn!("skipping mesh {nif}: {error}"))
                         .ok()
-                })
-                .flatten()
-                .collect()
-        };
+                    })
+                    .flatten()
+                    .collect()
+            };
         if args.textures == TextureMode::External {
             externalize_textures(&mut meshes, extract_dir).map_err(|e| e.to_string())?;
         }

@@ -15,11 +15,11 @@ use tokio::{fs, task::JoinSet};
 
 use crate::AnyError;
 
+use super::actor::{EXPECTED_TREE, EXTRACT_DIR_NAME, RigArgs, RigResolver};
 #[cfg(feature = "fbx")]
 use super::actor::{
     NifSource, Rig, TextureMode, externalize_textures, filter_nifs, load_meshes, relative_textures,
 };
-use super::actor::{EXPECTED_TREE, EXTRACT_DIR_NAME, RigArgs, RigResolver};
 use super::{Output, invalid_input, is_serde_hkx_supported_extension, write_file};
 
 const EXAMPLES: &str = r#"Examples
@@ -233,7 +233,8 @@ pub async fn exportrig(args: &Args) -> Result<(), AnyError> {
         #[cfg(feature = "fbx")]
         let fps = args.fps;
         #[cfg(feature = "fbx")]
-        let texture_root = (args.textures == TextureMode::External).then(|| texture_root(args, &resolver));
+        let texture_root =
+            (args.textures == TextureMode::External).then(|| texture_root(args, &resolver));
         #[cfg(feature = "fbx")]
         let meshes = match meshes_by_rig.get(&rig.id) {
             Some(meshes) => Arc::clone(meshes),
@@ -246,7 +247,10 @@ pub async fn exportrig(args: &Args) -> Result<(), AnyError> {
         };
 
         tasks.spawn(async move {
-            let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+            let name = path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default();
             export_animation(
                 &path,
                 root.as_deref(),
@@ -282,14 +286,21 @@ pub async fn exportrig(args: &Args) -> Result<(), AnyError> {
         }
     }
     bar.finish_and_clear();
-    crate::ui::info(&format!("<green>Exported {} animations</green>", bar.position()));
+    crate::ui::info(&format!(
+        "<green>Exported {} animations</green>",
+        bar.position()
+    ));
 
     Ok(())
 }
 
 /// Meshes for FBX output: `--nif`, else the actor's meshes.
 #[cfg(feature = "fbx")]
-fn rig_meshes(args: &Args, resolver: &RigResolver, rig: &Rig) -> Result<Vec<serde_fbx::ser::Mesh>, Error> {
+fn rig_meshes(
+    args: &Args,
+    resolver: &RigResolver,
+    rig: &Rig,
+) -> Result<Vec<serde_fbx::ser::Mesh>, Error> {
     if args.no_mesh || !matches!(args.format, Format::Fbx | Format::FbxAscii) {
         return Ok(Vec::new());
     }
@@ -329,12 +340,17 @@ fn rig_meshes(args: &Args, resolver: &RigResolver, rig: &Rig) -> Result<Vec<serd
 /// the extract directory when used, else the output directory.
 #[cfg(feature = "fbx")]
 fn texture_root(args: &Args, resolver: &RigResolver) -> PathBuf {
-    resolver.extract_dir().map_or_else(|| output_root(args), Path::to_path_buf)
+    resolver
+        .extract_dir()
+        .map_or_else(|| output_root(args), Path::to_path_buf)
 }
 
 /// Output directory (the parent of an explicit output file).
 fn output_root(args: &Args) -> PathBuf {
-    let output = args.output.clone().unwrap_or_else(|| PathBuf::from("output"));
+    let output = args
+        .output
+        .clone()
+        .unwrap_or_else(|| PathBuf::from("output"));
     if output.extension().is_some() && !output.is_dir() {
         output.parent().map(Path::to_path_buf).unwrap_or_default()
     } else {
@@ -544,7 +560,10 @@ async fn export_skeleton_json(skeleton: &Skeleton, output: &Output) -> Result<()
 ///
 /// Returns [`AnyError`] if the animation cannot be read or decoded, conversion
 /// or serialization fails, or an output file cannot be written.
-#[cfg_attr(feature = "fbx", expect(clippy::too_many_arguments, reason = "feature-gated FBX options"))]
+#[cfg_attr(
+    feature = "fbx",
+    expect(clippy::too_many_arguments, reason = "feature-gated FBX options")
+)]
 async fn export_animation(
     input: &Path,
     root: Option<&Path>,
@@ -623,9 +642,10 @@ pub(super) fn write_animation(
                     Format::Kf => unreachable!(),
                 },
                 fps,
-                take_name: input
-                    .file_stem()
-                    .map_or_else(|| "Take 001".into(), |stem| stem.to_string_lossy().into_owned()),
+                take_name: input.file_stem().map_or_else(
+                    || "Take 001".into(),
+                    |stem| stem.to_string_lossy().into_owned(),
+                ),
                 meshes: meshes.to_vec(),
             };
 

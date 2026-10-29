@@ -20,7 +20,13 @@ pub struct DataDir {
 }
 
 /// Base game / DLC archive name prefixes, in load order.
-const LOAD_ORDER: &[&str] = &["skyrim - ", "update", "dawnguard", "hearthfires", "dragonborn"];
+const LOAD_ORDER: &[&str] = &[
+    "skyrim - ",
+    "update",
+    "dawnguard",
+    "hearthfires",
+    "dragonborn",
+];
 
 fn load_order_key(name: &str) -> (usize, String) {
     let lower = name.to_lowercase();
@@ -42,9 +48,14 @@ impl DataDir {
             .context(IoSnafu { path: &root })?
             .filter_map(Result::ok)
             .map(|entry| entry.path())
-            .filter(|path| path.extension().is_some_and(|ext| ext.eq_ignore_ascii_case("bsa")))
+            .filter(|path| {
+                path.extension()
+                    .is_some_and(|ext| ext.eq_ignore_ascii_case("bsa"))
+            })
             .collect();
-        archives.sort_by_key(|path| load_order_key(&path.file_name().unwrap_or_default().to_string_lossy()));
+        archives.sort_by_key(|path| {
+            load_order_key(&path.file_name().unwrap_or_default().to_string_lossy())
+        });
 
         Ok(Self {
             archives: ArchiveSet::open(&archives)?,
@@ -61,7 +72,9 @@ impl DataDir {
 
     /// The `Data` directory (lowest priority loose root).
     pub fn root(&self) -> &Path {
-        self.roots.last().map_or_else(|| Path::new(""), PathBuf::as_path)
+        self.roots
+            .last()
+            .map_or_else(|| Path::new(""), PathBuf::as_path)
     }
 
     pub const fn archives(&self) -> &ArchiveSet {
@@ -77,7 +90,9 @@ impl DataDir {
         for root in &self.roots {
             let loose = root.join(&relative);
             if loose.is_file() {
-                return std::fs::read(&loose).map(Some).context(IoSnafu { path: loose });
+                return std::fs::read(&loose)
+                    .map(Some)
+                    .context(IoSnafu { path: loose });
             }
         }
         self.archives.read(path)

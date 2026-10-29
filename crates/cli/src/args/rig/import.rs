@@ -194,7 +194,10 @@ pub async fn importrig(args: &Args) -> Result<(), AnyError> {
         }
     }
     bar.finish_and_clear();
-    crate::ui::info(&format!("<green>Imported {} animations</green>", bar.position()));
+    crate::ui::info(&format!(
+        "<green>Imported {} animations</green>",
+        bar.position()
+    ));
 
     Ok(())
 }

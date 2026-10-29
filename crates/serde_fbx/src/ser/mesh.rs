@@ -184,7 +184,10 @@ impl SceneBuilder {
                         .value("Indexes", Property::I32Array(cluster.indices.clone()))
                         .value("Weights", Property::F64Array(cluster.weights.clone()))
                         .value("Transform", Property::F64Array(transform.to_fbx_array()))
-                        .value("TransformLink", Property::F64Array(cluster.bind.to_fbx_array())),
+                        .value(
+                            "TransformLink",
+                            Property::F64Array(cluster.bind.to_fbx_array()),
+                        ),
                 );
                 self.deformers += 1;
                 self.connect(id, skin);
@@ -245,7 +248,13 @@ impl SceneBuilder {
                 .child(
                     Properties70::new()
                         .string("ShadingModel", "phong")
-                        .entry("DiffuseColor", "Color", "", "A", [1.0, 1.0, 1.0].map(Property::F64))
+                        .entry(
+                            "DiffuseColor",
+                            "Color",
+                            "",
+                            "A",
+                            [1.0, 1.0, 1.0].map(Property::F64),
+                        )
                         .entry("DiffuseFactor", "Number", "", "A", [Property::F64(1.0)])
                         .build(),
                 ),
@@ -282,7 +291,13 @@ impl SceneBuilder {
                     .child(Node::new("ModelUVTranslation").prop(0.0).prop(0.0))
                     .child(Node::new("ModelUVScaling").prop(1.0).prop(1.0))
                     .value("Texture_Alpha_Source", "None")
-                    .child(Node::new("Cropping").prop(0i32).prop(0i32).prop(0i32).prop(0i32)),
+                    .child(
+                        Node::new("Cropping")
+                            .prop(0i32)
+                            .prop(0i32)
+                            .prop(0i32)
+                            .prop(0i32),
+                    ),
             );
             self.textures += 1;
             self.connect_prop(id, material, texture.slot.property());
@@ -298,7 +313,13 @@ impl SceneBuilder {
                         .value("Type", "Clip")
                         .child(
                             Properties70::new()
-                                .entry("Path", "KString", "XRefUrl", "", [Property::from(texture.path.as_str())])
+                                .entry(
+                                    "Path",
+                                    "KString",
+                                    "XRefUrl",
+                                    "",
+                                    [Property::from(texture.path.as_str())],
+                                )
                                 .build(),
                         )
                         .value("UseMipMap", 0)
@@ -437,7 +458,9 @@ fn geometry_node(id: i64, mesh: &Mesh) -> Node {
                 .value("ReferenceInformationType", "Direct")
                 .value(
                     "Normals",
-                    Property::F64Array(mesh.normals.iter().flat_map(|n| n.map(f64::from)).collect()),
+                    Property::F64Array(
+                        mesh.normals.iter().flat_map(|n| n.map(f64::from)).collect(),
+                    ),
                 ),
         );
         layer.push(layer_element("LayerElementNormal"));

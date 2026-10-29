@@ -541,7 +541,9 @@ fn read_quat_three_comp48(input: &mut &[u8]) -> ModalResult<RawQuat> {
     let fz = ((raw_z & MASK) - (MASK >> 1)) as f32 * FRACTAL;
 
     let mut out = scatter3_to4(fx, fy, fz, result_shift);
-    let mut w = (1.0 - fz.mul_add(fz, fy.mul_add(fy, fx * fx))).max(0.0).sqrt();
+    let mut w = (1.0 - fz.mul_add(fz, fy.mul_add(fy, fx * fx)))
+        .max(0.0)
+        .sqrt();
     if r_sign {
         w = -w;
     }

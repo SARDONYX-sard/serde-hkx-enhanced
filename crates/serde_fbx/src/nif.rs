@@ -105,7 +105,10 @@ fn rigid_cluster(scene: &Scene, shape: &Shape) -> Vec<Cluster> {
 
 /// `Textures\Actors\Cow\a.dds` or `actors\cow\a.dds` -> `textures/actors/cow/a.dds`.
 pub fn normalize_texture_path(path: &str) -> String {
-    let path = path.replace('\\', "/").trim_start_matches('/').to_lowercase();
+    let path = path
+        .replace('\\', "/")
+        .trim_start_matches('/')
+        .to_lowercase();
     if path.starts_with("textures/") {
         path
     } else {

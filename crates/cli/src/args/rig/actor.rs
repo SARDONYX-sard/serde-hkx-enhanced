@@ -117,7 +117,9 @@ pub fn discover_actors(data: &DataDir) -> Vec<Actor> {
                     };
                     (parent == folder || parent == dir)
                         && name.ends_with(".nif")
-                        && !EXCLUDED_NIF_PREFIXES.iter().any(|prefix| name.starts_with(prefix))
+                        && !EXCLUDED_NIF_PREFIXES
+                            .iter()
+                            .any(|prefix| name.starts_with(prefix))
                 })
                 .filter(|p| {
                     // Weight variants: keep `_0` only.
@@ -139,7 +141,12 @@ pub fn discover_actors(data: &DataDir) -> Vec<Actor> {
     // Several skeletons in one folder (draugr: skeleton, skeletonf, skeletons).
     let ids: Vec<String> = actors.iter().map(|a| a.id.clone()).collect();
     for actor in &mut actors {
-        let stem = actor.skeleton.rsplit('/').next().unwrap_or_default().trim_end_matches(".hkx");
+        let stem = actor
+            .skeleton
+            .rsplit('/')
+            .next()
+            .unwrap_or_default()
+            .trim_end_matches(".hkx");
         if stem != "skeleton" && ids.iter().filter(|id| **id == actor.id).count() > 1 {
             actor.id = format!("{}/{stem}", actor.id);
         }
@@ -149,7 +156,8 @@ pub fn discover_actors(data: &DataDir) -> Vec<Actor> {
                 .iter()
                 .filter(|p| {
                     p.starts_with(&assets)
-                        && p.rsplit_once('/').is_some_and(|(_, name)| names.contains(&name))
+                        && p.rsplit_once('/')
+                            .is_some_and(|(_, name)| names.contains(&name))
                 })
                 .cloned()
                 .collect();
@@ -167,11 +175,21 @@ const EXCLUDED_NIF_PREFIXES: &[&str] = &["skeleton", "1stperson", "decapitated"]
 const DEFAULT_MESHES: &[(&str, &[&str])] = &[
     (
         "character",
-        &["malebody_0.nif", "malehands_0.nif", "malefeet_0.nif", "malehead.nif"],
+        &[
+            "malebody_0.nif",
+            "malehands_0.nif",
+            "malefeet_0.nif",
+            "malehead.nif",
+        ],
     ),
     (
         "character/female",
-        &["femalebody_0.nif", "femalehands_0.nif", "femalefeet_0.nif", "femalehead.nif"],
+        &[
+            "femalebody_0.nif",
+            "femalehands_0.nif",
+            "femalefeet_0.nif",
+            "femalehead.nif",
+        ],
     ),
 ];
 
@@ -210,7 +228,9 @@ pub fn find_actor<'a>(actors: &'a [Actor], query: &str) -> Result<&'a Actor, Err
             let similar: Vec<_> = actors
                 .iter()
                 .map(|a| a.id.as_str())
-                .filter(|id| id.contains(query) || query.contains(id.rsplit('/').next().unwrap_or(id)))
+                .filter(|id| {
+                    id.contains(query) || query.contains(id.rsplit('/').next().unwrap_or(id))
+                })
                 .collect();
             let hint = if similar.is_empty() {
                 String::new()
@@ -219,12 +239,20 @@ pub fn find_actor<'a>(actors: &'a [Actor], query: &str) -> Result<&'a Actor, Err
             };
             Err(invalid_input(format!(
                 "actor '{query}' not found.{hint}\nAvailable actors:\n  {}\n(`hkxc exportall --list` shows details)",
-                actors.iter().map(|a| a.id.as_str()).collect::<Vec<_>>().join("\n  ")
+                actors
+                    .iter()
+                    .map(|a| a.id.as_str())
+                    .collect::<Vec<_>>()
+                    .join("\n  ")
             )))
         }
         several => Err(invalid_input(format!(
             "actor '{query}' has several skeletons; use one of: {}",
-            several.iter().map(|a| a.id.as_str()).collect::<Vec<_>>().join(", ")
+            several
+                .iter()
+                .map(|a| a.id.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
         ))),
     }
 }
@@ -237,8 +265,15 @@ pub fn actor_dir_from_path(path: &Path) -> Option<(String, PathBuf)> {
         .map(|c| c.as_os_str().to_string_lossy().to_lowercase())
         .collect();
 
-    let meshes = lower.windows(2).position(|w| w[0] == "meshes" && w[1] == "actors")?;
-    let animations = lower.iter().skip(meshes + 2).position(|c| c == "animations")? + meshes + 2;
+    let meshes = lower
+        .windows(2)
+        .position(|w| w[0] == "meshes" && w[1] == "actors")?;
+    let animations = lower
+        .iter()
+        .skip(meshes + 2)
+        .position(|c| c == "animations")?
+        + meshes
+        + 2;
     if animations <= meshes + 2 {
         return None;
     }
@@ -264,7 +299,11 @@ fn loose_skeletons(actor_dir: &Path) -> Vec<PathBuf> {
         .filter_map(Result::ok)
         .map(|e| e.path())
         .filter(|p| {
-            let name = p.file_name().unwrap_or_default().to_string_lossy().to_lowercase();
+            let name = p
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_lowercase();
             name.starts_with("skeleton") && (name.ends_with(".hkx") || name.ends_with(".xml"))
         })
         .collect();
@@ -294,8 +333,10 @@ pub fn find_skyrim_data() -> Option<PathBuf> {
         }
     }
 
-    let steam = reg_query(r"HKCU\Software\Valve\Steam", "SteamPath")
-        .map_or_else(|| PathBuf::from(r"C:\Program Files (x86)\Steam"), PathBuf::from);
+    let steam = reg_query(r"HKCU\Software\Valve\Steam", "SteamPath").map_or_else(
+        || PathBuf::from(r"C:\Program Files (x86)\Steam"),
+        PathBuf::from,
+    );
     let mut libraries = vec![steam.clone()];
     if let Ok(vdf) = std::fs::read_to_string(steam.join("steamapps").join("libraryfolders.vdf")) {
         for line in vdf.lines() {
@@ -309,7 +350,13 @@ pub fn find_skyrim_data() -> Option<PathBuf> {
     }
     for library in libraries {
         for game in ["Skyrim Special Edition", "Skyrim"] {
-            candidates.push(library.join("steamapps").join("common").join(game).join("Data"));
+            candidates.push(
+                library
+                    .join("steamapps")
+                    .join("common")
+                    .join(game)
+                    .join("Data"),
+            );
         }
     }
 
@@ -355,7 +402,9 @@ impl RigResolver {
             .transpose()?;
 
         if explicit.is_none() && args.actor.is_none() && !args.auto {
-            return Err(invalid_input("one of --skeleton, --actor or --auto is required"));
+            return Err(invalid_input(
+                "one of --skeleton, --actor or --auto is required",
+            ));
         }
 
         Ok(Self {
@@ -400,8 +449,12 @@ impl RigResolver {
                         }
                     }
                     None => {
-                        let dir = extract.ok_or("Skyrim Data directory not found; pass --data <DIR>")?;
-                        tracing::info!("Data directory not found; using extracted data: {}", dir.display());
+                        let dir =
+                            extract.ok_or("Skyrim Data directory not found; pass --data <DIR>")?;
+                        tracing::info!(
+                            "Data directory not found; using extracted data: {}",
+                            dir.display()
+                        );
                         DataDir::open(&dir).map_err(|e| e.to_string())?
                     }
                 };
@@ -502,7 +555,12 @@ impl RigResolver {
         let bytes = self.read_data(&actor.skeleton)?;
         let skeleton = Skeleton::from_bytes(&bytes, Path::new(&actor.skeleton))
             .map_err(|e| invalid_input(format!("{}: {e}", actor.skeleton)))?;
-        tracing::info!("Actor '{}': {} ({} meshes)", actor.id, actor.skeleton, actor.nifs.len());
+        tracing::info!(
+            "Actor '{}': {} ({} meshes)",
+            actor.id,
+            actor.skeleton,
+            actor.nifs.len()
+        );
 
         let rig = Arc::new(Rig {
             id: actor.id.clone(),
@@ -519,14 +577,19 @@ fn read_skeleton(path: &Path) -> Result<Skeleton, Error> {
         source,
         path: path.to_owned(),
     })?;
-    Skeleton::from_bytes(&bytes, path).map_err(|e| invalid_input(format!("{}: {e}", path.display())))
+    Skeleton::from_bytes(&bytes, path)
+        .map_err(|e| invalid_input(format!("{}: {e}", path.display())))
 }
 
 /// Loads NIF meshes for FBX, embedding textures found in the Data directory.
 ///
 /// `nif` is either a file on disk or a path inside the Data directory.
 #[cfg(feature = "fbx")]
-pub fn load_meshes(nif: NifSource<'_>, data: Option<&DataDir>, textures: bool) -> Result<Vec<serde_fbx::ser::Mesh>, Error> {
+pub fn load_meshes(
+    nif: NifSource<'_>,
+    data: Option<&DataDir>,
+    textures: bool,
+) -> Result<Vec<serde_fbx::ser::Mesh>, Error> {
     let (bytes, name) = match nif {
         NifSource::File(path) => (
             std::fs::read(path).map_err(|source| Error::FailedReadFile {
@@ -541,8 +604,8 @@ pub fn load_meshes(nif: NifSource<'_>, data: Option<&DataDir>, textures: bool) -
             path.to_owned(),
         ),
     };
-    let scene =
-        serde_nif::from_bytes(&bytes).map_err(|e| invalid_input(format!("failed to read '{name}': {e}")))?;
+    let scene = serde_nif::from_bytes(&bytes)
+        .map_err(|e| invalid_input(format!("failed to read '{name}': {e}")))?;
 
     // Loose textures next to an on-disk NIF (`<Data>/meshes/...` -> `<Data>/textures/...`).
     let loose_root = match nif {
@@ -598,7 +661,11 @@ pub fn externalize_textures(meshes: &mut [serde_fbx::ser::Mesh], root: &Path) ->
 /// Meshes whose texture paths are relative to the directory of `fbx`,
 /// for textures written under `root` by [`externalize_textures`].
 #[cfg(feature = "fbx")]
-pub fn relative_textures(meshes: &[serde_fbx::ser::Mesh], fbx: &Path, root: &Path) -> Vec<serde_fbx::ser::Mesh> {
+pub fn relative_textures(
+    meshes: &[serde_fbx::ser::Mesh],
+    fbx: &Path,
+    root: &Path,
+) -> Vec<serde_fbx::ser::Mesh> {
     let dir = fbx.parent().unwrap_or_else(|| Path::new(""));
     let prefix = relative_dir(dir, root);
     let mut meshes = meshes.to_vec();
@@ -637,7 +704,10 @@ pub enum NifSource<'a> {
 #[cfg(feature = "fbx")]
 fn data_root_of(path: &Path) -> Option<PathBuf> {
     path.ancestors()
-        .find(|p| p.file_name().is_some_and(|n| n.eq_ignore_ascii_case("meshes")))
+        .find(|p| {
+            p.file_name()
+                .is_some_and(|n| n.eq_ignore_ascii_case("meshes"))
+        })
         .and_then(Path::parent)
         .map(Path::to_path_buf)
 }
@@ -649,16 +719,24 @@ mod tests {
     #[cfg(feature = "fbx")]
     #[test]
     fn relative_dir_between_siblings() {
-        assert_eq!(relative_dir(Path::new("out/cow/sub"), Path::new("out/data")), "../../data/");
+        assert_eq!(
+            relative_dir(Path::new("out/cow/sub"), Path::new("out/data")),
+            "../../data/"
+        );
         assert_eq!(relative_dir(Path::new("out"), Path::new("out")), "");
     }
 
     #[test]
     fn actor_dir_from_mod_path() {
-        let (dir, disk) =
-            actor_dir_from_path(Path::new("mods/x/Meshes/Actors/dlc01/ChaurusFlyer/Animations/sub/a.hkx")).unwrap();
+        let (dir, disk) = actor_dir_from_path(Path::new(
+            "mods/x/Meshes/Actors/dlc01/ChaurusFlyer/Animations/sub/a.hkx",
+        ))
+        .unwrap();
         assert_eq!(dir, "meshes/actors/dlc01/chaurusflyer");
-        assert_eq!(disk, PathBuf::from("mods/x/Meshes/Actors/dlc01/ChaurusFlyer"));
+        assert_eq!(
+            disk,
+            PathBuf::from("mods/x/Meshes/Actors/dlc01/ChaurusFlyer")
+        );
         assert!(actor_dir_from_path(Path::new("anims/a.hkx")).is_none());
     }
 }

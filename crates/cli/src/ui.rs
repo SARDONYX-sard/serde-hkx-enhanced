@@ -70,7 +70,10 @@ pub fn escape(text: &str) -> String {
 
 /// `[Error]` message for stderr.
 pub fn error(message: &str) -> String {
-    paint_for(Stream::Stderr, &format!("<red>[Error]\n{}</red>", escape(message)))
+    paint_for(
+        Stream::Stderr,
+        &format!("<red>[Error]\n{}</red>", escape(message)),
+    )
 }
 
 /// Renders markup; with `color == false` the tags are removed.
@@ -101,7 +104,9 @@ pub fn render(markup: &str, color: bool) -> String {
             rest = &rest[1..];
             continue;
         };
-        let (closing, name) = tag.strip_prefix('/').map_or((false, tag), |name| (true, name));
+        let (closing, name) = tag
+            .strip_prefix('/')
+            .map_or((false, tag), |name| (true, name));
         let Some(code) = ansi_code(name) else {
             // Not a known tag: keep it as text.
             out.push_str(&rest[..tag.len() + 2]);
@@ -161,7 +166,10 @@ pub fn info(markup: &str) {
 }
 
 /// A progress bar on stderr; hidden with `--quiet` or when stderr is not a terminal.
-#[expect(clippy::literal_string_with_formatting_args, reason = "indicatif template")]
+#[expect(
+    clippy::literal_string_with_formatting_args,
+    reason = "indicatif template"
+)]
 pub fn progress_bar(total: u64, prefix: impl Into<String>) -> ProgressBar {
     if quiet() || !std::io::stderr().is_terminal() {
         return ProgressBar::hidden();

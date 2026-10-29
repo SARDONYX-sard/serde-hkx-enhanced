@@ -58,7 +58,9 @@ impl SplineDecompressor {
         // `MAX_FRAMES_PER_BLOCK - 1` frames. This matches `m_numBlocks` and
         // `m_blockDuration` written in `hkx::ser`.
         const BLOCK_STRIDE: usize = MAX_FRAMES_PER_BLOCK - 1;
-        let num_blocks = (frame_count.saturating_sub(1)).div_ceil(BLOCK_STRIDE).max(1);
+        let num_blocks = (frame_count.saturating_sub(1))
+            .div_ceil(BLOCK_STRIDE)
+            .max(1);
         let mut blocks = Vec::with_capacity(num_blocks);
 
         for block_index in 0..num_blocks {

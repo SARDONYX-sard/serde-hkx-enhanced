@@ -180,15 +180,23 @@ impl Scene {
             chain.push(node.transform);
             current = node.parent;
         }
-        chain.iter().rev().fold(Transform::default(), |parent, local| parent.compose(local))
+        chain
+            .iter()
+            .rev()
+            .fold(Transform::default(), |parent, local| parent.compose(local))
     }
 }
 
 impl Transform {
     /// Inverse transform (rotation is assumed orthonormal).
     pub fn inverse(&self) -> Self {
-        let rt: [[f32; 3]; 3] = core::array::from_fn(|r| core::array::from_fn(|c| self.rotation[c][r]));
-        let inv_scale = if self.scale.abs() > f32::EPSILON { 1.0 / self.scale } else { 0.0 };
+        let rt: [[f32; 3]; 3] =
+            core::array::from_fn(|r| core::array::from_fn(|c| self.rotation[c][r]));
+        let inv_scale = if self.scale.abs() > f32::EPSILON {
+            1.0 / self.scale
+        } else {
+            0.0
+        };
         let t = mul33v(&rt, self.translation);
         Self {
             translation: t.map(|v| -v * inv_scale),
@@ -227,13 +235,20 @@ pub fn from_bytes(bytes: &[u8]) -> Result<Scene, Error> {
     let header = Header::read(&mut reader)?;
 
     let mut blocks = Vec::with_capacity(header.block_types.len());
-    for (index, (block_type, &size)) in header.block_types.iter().zip(&header.block_sizes).enumerate() {
+    for (index, (block_type, &size)) in header
+        .block_types
+        .iter()
+        .zip(&header.block_sizes)
+        .enumerate()
+    {
         let start = reader.pos;
         let data = reader.take(size as usize)?;
-        let block = read_block(&mut Reader::new(data), block_type, &header).map_err(|source| Error::Block {
-            index,
-            block_type: block_type.clone(),
-            source: Box::new(source),
+        let block = read_block(&mut Reader::new(data), block_type, &header).map_err(|source| {
+            Error::Block {
+                index,
+                block_type: block_type.clone(),
+                source: Box::new(source),
+            }
         })?;
         debug_assert_eq!(reader.pos, start + size as usize);
         blocks.push(block);
@@ -288,7 +303,9 @@ impl Header {
                 _ => return InvalidHeaderSnafu.fail(),
             }
         }
-        if !(line.starts_with(b"Gamebryo File Format") || line.starts_with(b"NetImmerse File Format")) {
+        if !(line.starts_with(b"Gamebryo File Format")
+            || line.starts_with(b"NetImmerse File Format"))
+        {
             return InvalidHeaderSnafu.fail();
         }
 
@@ -336,7 +353,9 @@ impl Header {
                 })
             })
             .collect::<Result<Vec<_>, _>>()?;
-        let block_sizes = (0..num_blocks).map(|_| reader.u32()).collect::<Result<Vec<_>, _>>()?;
+        let block_sizes = (0..num_blocks)
+            .map(|_| reader.u32())
+            .collect::<Result<Vec<_>, _>>()?;
 
         let num_strings = reader.u32()? as usize;
         let _max_string_len = reader.u32()?;
@@ -485,7 +504,9 @@ fn read_block(r: &mut Reader<'_>, block_type: &str, header: &Header) -> Result<B
                 children,
             }
         }
-        "BSTriShape" | "BSMeshLODTriShape" | "BSSubIndexTriShape" => read_bs_tri_shape(r, header, false)?,
+        "BSTriShape" | "BSMeshLODTriShape" | "BSSubIndexTriShape" => {
+            read_bs_tri_shape(r, header, false)?
+        }
         "BSDynamicTriShape" => read_bs_tri_shape(r, header, true)?,
         // NiTriShape / NiTriStrips (LE mesh), NiGeometry fields after NiAVObject:
         //   i32 ref   data           NiTriShapeData / NiTriStripsData (vertices, triangles)
@@ -513,7 +534,9 @@ fn read_block(r: &mut Reader<'_>, block_type: &str, header: &Header) -> Result<B
                 shader,
             }
         }
-        "NiTriShapeData" | "NiTriStripsData" => read_geometry_data(r, block_type == "NiTriStripsData")?,
+        "NiTriShapeData" | "NiTriStripsData" => {
+            read_geometry_data(r, block_type == "NiTriStripsData")?
+        }
         // NiSkinInstance (BSDismemberSkinInstance adds body part partitions after it):
         //   i32 ref   skin data       NiSkinData
         //   i32 ref   skin partition  NiSkinPartition
@@ -551,7 +574,9 @@ fn read_block(r: &mut Reader<'_>, block_type: &str, header: &Header) -> Result<B
             let count = r.u32()? as usize;
             r.check_len(count, 4)?;
             Block::TextureSet {
-                textures: (0..count).map(|_| r.sized_string()).collect::<Result<_, _>>()?,
+                textures: (0..count)
+                    .map(|_| r.sized_string())
+                    .collect::<Result<_, _>>()?,
             }
         }
         _ => Block::Other,
@@ -687,7 +712,11 @@ fn read_vertex(
         vertex.uv = [r.f16()?, r.f16()?];
     }
     if layout.has_normal {
-        vertex.normal = [byte_to_unit(r.u8()?), byte_to_unit(r.u8()?), byte_to_unit(r.u8()?)];
+        vertex.normal = [
+            byte_to_unit(r.u8()?),
+            byte_to_unit(r.u8()?),
+            byte_to_unit(r.u8()?),
+        ];
         r.u8()?; // bitangent y
         if layout.has_tangent {
             r.skip(4)?;
@@ -717,14 +746,23 @@ fn read_vertices(
 ) -> Result<Vec<Vertex>, Error> {
     r.check_len(count, vertex_size)?;
     (0..count)
-        .map(|_| read_vertex(&mut Reader::new(r.take(vertex_size)?), desc, layout, full_precision))
+        .map(|_| {
+            read_vertex(
+                &mut Reader::new(r.take(vertex_size)?),
+                desc,
+                layout,
+                full_precision,
+            )
+        })
         .collect()
 }
 
 /// `u16 x3` vertex indices per triangle.
 fn read_triangles(r: &mut Reader<'_>, count: usize) -> Result<Vec<[u16; 3]>, Error> {
     r.check_len(count, 6)?;
-    (0..count).map(|_| Ok([r.u16()?, r.u16()?, r.u16()?])).collect()
+    (0..count)
+        .map(|_| Ok([r.u16()?, r.u16()?, r.u16()?]))
+        .collect()
 }
 
 /// `BSTriShape` (SE mesh). Unlike `NiTriShape`, the geometry is inside the block.
@@ -844,7 +882,9 @@ fn read_geometry_data(r: &mut Reader<'_>, strips: bool) -> Result<Block, Error> 
     let has_vertices = r.bool()?;
     r.check_len(num_vertices, 12)?;
     let vertices = if has_vertices {
-        (0..num_vertices).map(|_| r.vec3()).collect::<Result<_, _>>()?
+        (0..num_vertices)
+            .map(|_| r.vec3())
+            .collect::<Result<_, _>>()?
     } else {
         Vec::new()
     };
@@ -854,7 +894,9 @@ fn read_geometry_data(r: &mut Reader<'_>, strips: bool) -> Result<Block, Error> 
     let has_normals = r.bool()?;
     let mut normals = Vec::new();
     if has_normals {
-        normals = (0..num_vertices).map(|_| r.vec3()).collect::<Result<_, _>>()?;
+        normals = (0..num_vertices)
+            .map(|_| r.vec3())
+            .collect::<Result<_, _>>()?;
         if data_flags & 0xf000 != 0 {
             r.skip(num_vertices.saturating_mul(24))?; // tangents + bitangents
         }
@@ -864,7 +906,9 @@ fn read_geometry_data(r: &mut Reader<'_>, strips: bool) -> Result<Block, Error> 
         r.skip(num_vertices.saturating_mul(16))?; // vertex colors
     }
     let uvs = if data_flags & 1 != 0 {
-        (0..num_vertices).map(|_| r.vec2()).collect::<Result<_, _>>()?
+        (0..num_vertices)
+            .map(|_| r.vec2())
+            .collect::<Result<_, _>>()?
     } else {
         Vec::new()
     };
@@ -874,7 +918,9 @@ fn read_geometry_data(r: &mut Reader<'_>, strips: bool) -> Result<Block, Error> 
     let num_triangles = r.u16()? as usize;
     let triangles = if strips {
         let num_strips = r.u16()? as usize;
-        let lengths = (0..num_strips).map(|_| r.u16()).collect::<Result<Vec<_>, _>>()?;
+        let lengths = (0..num_strips)
+            .map(|_| r.u16())
+            .collect::<Result<Vec<_>, _>>()?;
         let mut triangles = Vec::with_capacity(num_triangles);
         if r.bool()? {
             for len in lengths {
@@ -883,7 +929,11 @@ fn read_geometry_data(r: &mut Reader<'_>, strips: bool) -> Result<Block, Error> 
                     if w[0] == w[1] || w[1] == w[2] || w[0] == w[2] {
                         continue; // degenerate strip joint
                     }
-                    triangles.push(if i % 2 == 0 { [w[0], w[1], w[2]] } else { [w[0], w[2], w[1]] });
+                    triangles.push(if i % 2 == 0 {
+                        [w[0], w[1], w[2]]
+                    } else {
+                        [w[0], w[2], w[1]]
+                    });
                 }
             }
         }
@@ -991,7 +1041,14 @@ fn read_skin_partition(r: &mut Reader<'_>, header: &Header) -> Result<Block, Err
                 }
                 .fail();
             }
-            vertices = read_vertices(r, data_size / vertex_size, vertex_size, desc, &layout, false)?;
+            vertices = read_vertices(
+                r,
+                data_size / vertex_size,
+                vertex_size,
+                desc,
+                &layout,
+                false,
+            )?;
         }
     }
 
@@ -1003,9 +1060,13 @@ fn read_skin_partition(r: &mut Reader<'_>, header: &Header) -> Result<Block, Err
         let num_strips = r.u16()? as usize;
         let weights_per_vertex = r.u16()? as usize;
 
-        let bones = (0..num_bones).map(|_| r.u16()).collect::<Result<Vec<_>, _>>()?;
+        let bones = (0..num_bones)
+            .map(|_| r.u16())
+            .collect::<Result<Vec<_>, _>>()?;
         let vertex_map = if r.bool()? {
-            (0..num_vertices).map(|_| r.u16()).collect::<Result<Vec<_>, _>>()?
+            (0..num_vertices)
+                .map(|_| r.u16())
+                .collect::<Result<Vec<_>, _>>()?
         } else {
             Vec::new()
         };
@@ -1016,7 +1077,9 @@ fn read_skin_partition(r: &mut Reader<'_>, header: &Header) -> Result<Block, Err
         } else {
             Vec::new()
         };
-        let strip_lengths = (0..num_strips).map(|_| r.u16()).collect::<Result<Vec<_>, _>>()?;
+        let strip_lengths = (0..num_strips)
+            .map(|_| r.u16())
+            .collect::<Result<Vec<_>, _>>()?;
         if r.bool()? {
             if num_strips == 0 {
                 r.skip(num_triangles * 6)?;
@@ -1068,7 +1131,10 @@ struct SceneBuilder<'a> {
 
 impl SceneBuilder<'_> {
     fn string(&self, index: Option<usize>) -> String {
-        index.and_then(|i| self.strings.get(i)).cloned().unwrap_or_default()
+        index
+            .and_then(|i| self.strings.get(i))
+            .cloned()
+            .unwrap_or_default()
     }
 
     fn push_node(&mut self, name: String, transform: Transform, parent: Option<usize>) -> usize {
@@ -1133,7 +1199,10 @@ impl SceneBuilder<'_> {
                 {
                     vertices = partition_vertices;
                     layout = partition_layout;
-                    triangles = partitions.iter().flat_map(|p| p.true_triangles.iter().copied()).collect();
+                    triangles = partitions
+                        .iter()
+                        .flat_map(|p| p.true_triangles.iter().copied())
+                        .collect();
                 }
 
                 shape.vertices = if dynamic_positions.len() == vertices.len() {
@@ -1204,17 +1273,20 @@ impl SceneBuilder<'_> {
     }
 
     fn textures(&self, shader: Option<usize>) -> Vec<String> {
-        let Some(Block::LightingShader { texture_set }) = shader.and_then(|s| self.blocks.get(s)) else {
+        let Some(Block::LightingShader { texture_set }) = shader.and_then(|s| self.blocks.get(s))
+        else {
             return Vec::new();
         };
-        let Some(Block::TextureSet { textures }) = texture_set.and_then(|t| self.blocks.get(t)) else {
+        let Some(Block::TextureSet { textures }) = texture_set.and_then(|t| self.blocks.get(t))
+        else {
             return Vec::new();
         };
         textures.clone()
     }
 
     fn skin_partition(&self, skin: Option<usize>) -> Option<&Block> {
-        let Some(Block::SkinInstance { partition, .. }) = skin.and_then(|s| self.blocks.get(s)) else {
+        let Some(Block::SkinInstance { partition, .. }) = skin.and_then(|s| self.blocks.get(s))
+        else {
             return None;
         };
         partition.and_then(|p| self.blocks.get(p))
@@ -1258,7 +1330,9 @@ impl SceneBuilder<'_> {
                     }
                 }
             }
-        } else if let Some(Block::SkinPartition { partitions, .. }) = partition.and_then(|p| self.blocks.get(p)) {
+        } else if let Some(Block::SkinPartition { partitions, .. }) =
+            partition.and_then(|p| self.blocks.get(p))
+        {
             for p in partitions {
                 for (local, &vertex) in p.vertex_map.iter().enumerate() {
                     let Some(w) = weights.get_mut(vertex as usize) else {
@@ -1269,7 +1343,9 @@ impl SceneBuilder<'_> {
                     }
                     for k in 0..p.weights_per_vertex {
                         let i = local * p.weights_per_vertex + k;
-                        let (Some(&weight), Some(&bone)) = (p.weights.get(i), p.bone_indices.get(i)) else {
+                        let (Some(&weight), Some(&bone)) =
+                            (p.weights.get(i), p.bone_indices.get(i))
+                        else {
                             continue;
                         };
                         if weight > 0.0

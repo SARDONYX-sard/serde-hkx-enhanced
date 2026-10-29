@@ -2,7 +2,10 @@
 //!
 //! Matrices act on column vectors (`v' = M * v`) and are stored row-major:
 //! `m[row][col]`, translation in `m[0..3][3]`.
-#![allow(clippy::suboptimal_flops, reason = "matrix formulas stay readable as written")]
+#![allow(
+    clippy::suboptimal_flops,
+    reason = "matrix formulas stay readable as written"
+)]
 
 use havok_types::{QsTransform, Quaternion, Vector4};
 
@@ -59,9 +62,21 @@ impl Mat4 {
         };
 
         Self::from_rotation([
-            [1.0 - 2.0 * (y * y + z * z), 2.0 * (x * y - z * w), 2.0 * (x * z + y * w)],
-            [2.0 * (x * y + z * w), 1.0 - 2.0 * (x * x + z * z), 2.0 * (y * z - x * w)],
-            [2.0 * (x * z - y * w), 2.0 * (y * z + x * w), 1.0 - 2.0 * (x * x + y * y)],
+            [
+                1.0 - 2.0 * (y * y + z * z),
+                2.0 * (x * y - z * w),
+                2.0 * (x * z + y * w),
+            ],
+            [
+                2.0 * (x * y + z * w),
+                1.0 - 2.0 * (x * x + z * z),
+                2.0 * (y * z - x * w),
+            ],
+            [
+                2.0 * (x * z - y * w),
+                2.0 * (y * z + x * w),
+                1.0 - 2.0 * (x * x + y * y),
+            ],
         ])
     }
 
@@ -123,7 +138,11 @@ impl Mat4 {
         let mut r = [[0.0; 3]; 3];
         for (c, &s) in scale.iter().enumerate() {
             for (row, r_row) in r.iter_mut().enumerate() {
-                r_row[c] = if s.abs() > f64::EPSILON { m[row][c] / s } else { 0.0 };
+                r_row[c] = if s.abs() > f64::EPSILON {
+                    m[row][c] / s
+                } else {
+                    0.0
+                };
             }
         }
 

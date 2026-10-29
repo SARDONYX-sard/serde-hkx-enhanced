@@ -13,7 +13,10 @@ impl<'a> Reader<'a> {
     }
 
     pub fn take(&mut self, len: usize) -> Result<&'a [u8], Error> {
-        let end = self.pos.checked_add(len).filter(|&end| end <= self.data.len());
+        let end = self
+            .pos
+            .checked_add(len)
+            .filter(|&end| end <= self.data.len());
         let Some(end) = end else {
             return UnexpectedEofSnafu {
                 offset: self.pos,

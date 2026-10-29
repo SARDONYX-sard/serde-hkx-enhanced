@@ -6,7 +6,9 @@
 use std::error::Error;
 
 fn main() -> Result<(), Box<dyn Error>> {
-    let path = std::env::args().nth(1).ok_or("usage: nif_dump <file.nif>")?;
+    let path = std::env::args()
+        .nth(1)
+        .ok_or("usage: nif_dump <file.nif>")?;
     let scene = serde_nif::from_bytes(&std::fs::read(path)?)?;
 
     println!("nodes: {}", scene.nodes.len());
@@ -46,7 +48,9 @@ fn main() -> Result<(), Box<dyn Error>> {
             for (bone, t) in skin.bones.iter().zip(&skin.skin_to_bone) {
                 let via_skin = skin_to_global.compose(&t.inverse()).translation;
                 let via_shape = shape_world.compose(&t.inverse()).translation;
-                println!("  bind {bone:?} via_global_to_skin={via_skin:?} via_shape_world={via_shape:?}");
+                println!(
+                    "  bind {bone:?} via_global_to_skin={via_skin:?} via_shape_world={via_shape:?}"
+                );
             }
         }
     }

@@ -30,7 +30,10 @@ use snafu::{ResultExt as _, Snafu};
 pub enum Error {
     /// I/O error on the archive file.
     #[snafu(display("{}: {source}", path.display()))]
-    Io { path: PathBuf, source: std::io::Error },
+    Io {
+        path: PathBuf,
+        source: std::io::Error,
+    },
 
     /// The file is not a supported BSA archive.
     #[snafu(display("{}: {message}", path.display()))]
@@ -73,7 +76,9 @@ pub struct Archive {
 
 /// Normalizes an archive path: lowercase with `/` separators.
 pub fn normalize(path: &str) -> String {
-    path.replace('\\', "/").trim_start_matches('/').to_lowercase()
+    path.replace('\\', "/")
+        .trim_start_matches('/')
+        .to_lowercase()
 }
 
 impl Archive {
@@ -87,8 +92,10 @@ impl Archive {
         let mut file = File::open(&path).context(IoSnafu { path: &path })?;
 
         let mut header = [0u8; 36];
-        file.read_exact(&mut header).context(IoSnafu { path: &path })?;
-        let u32_at = |i: usize| u32::from_le_bytes([header[i], header[i + 1], header[i + 2], header[i + 3]]);
+        file.read_exact(&mut header)
+            .context(IoSnafu { path: &path })?;
+        let u32_at =
+            |i: usize| u32::from_le_bytes([header[i], header[i + 1], header[i + 2], header[i + 3]]);
 
         let invalid = |message: &str| Error::Invalid {
             path: path.clone(),
@@ -102,8 +109,12 @@ impl Archive {
             return Err(invalid(&format!("unsupported BSA version {version}")));
         }
         let flags = u32_at(12);
-        if flags & (FLAG_DIRECTORY_NAMES | FLAG_FILE_NAMES) != (FLAG_DIRECTORY_NAMES | FLAG_FILE_NAMES) {
-            return Err(invalid("archives without directory/file names are not supported"));
+        if flags & (FLAG_DIRECTORY_NAMES | FLAG_FILE_NAMES)
+            != (FLAG_DIRECTORY_NAMES | FLAG_FILE_NAMES)
+        {
+            return Err(invalid(
+                "archives without directory/file names are not supported",
+            ));
         }
         let folder_count = u32_at(16) as usize;
         let file_count = u32_at(20) as usize;
@@ -112,7 +123,8 @@ impl Archive {
         // Folder records.
         let record_size = if version == 105 { 24 } else { 16 };
         let mut folders = vec![0u8; folder_count * record_size];
-        file.read_exact(&mut folders).context(IoSnafu { path: &path })?;
+        file.read_exact(&mut folders)
+            .context(IoSnafu { path: &path })?;
         let folder_file_counts: Vec<usize> = folders
             .chunks_exact(record_size)
             .map(|r| u32::from_le_bytes([r[8], r[9], r[10], r[11]]) as usize)
@@ -123,13 +135,20 @@ impl Archive {
         let mut reader = std::io::BufReader::new(&mut file);
         for &count in &folder_file_counts {
             let mut len = [0u8; 1];
-            reader.read_exact(&mut len).context(IoSnafu { path: &path })?;
+            reader
+                .read_exact(&mut len)
+                .context(IoSnafu { path: &path })?;
             let mut name = vec![0u8; len[0] as usize];
-            reader.read_exact(&mut name).context(IoSnafu { path: &path })?;
-            let folder = String::from_utf8_lossy(name.strip_suffix(&[0]).unwrap_or(&name)).into_owned();
+            reader
+                .read_exact(&mut name)
+                .context(IoSnafu { path: &path })?;
+            let folder =
+                String::from_utf8_lossy(name.strip_suffix(&[0]).unwrap_or(&name)).into_owned();
 
             let mut block = vec![0u8; count * 16];
-            reader.read_exact(&mut block).context(IoSnafu { path: &path })?;
+            reader
+                .read_exact(&mut block)
+                .context(IoSnafu { path: &path })?;
             for r in block.as_chunks::<16>().0 {
                 let size = u32::from_le_bytes([r[8], r[9], r[10], r[11]]);
                 let offset = u32::from_le_bytes([r[12], r[13], r[14], r[15]]);
@@ -139,7 +158,9 @@ impl Archive {
 
         // File names.
         let mut names = vec![0u8; total_file_name_length];
-        reader.read_exact(&mut names).context(IoSnafu { path: &path })?;
+        reader
+            .read_exact(&mut names)
+            .context(IoSnafu { path: &path })?;
         let names: Vec<&[u8]> = names.split(|&b| b == 0).collect();
         if names.len() < records.len() {
             return Err(invalid("file name block is shorter than the file count"));
@@ -195,7 +216,8 @@ impl Archive {
         file.seek(SeekFrom::Start(entry.offset))
             .context(IoSnafu { path: &self.path })?;
         let mut data = vec![0u8; entry.size as usize];
-        file.read_exact(&mut data).context(IoSnafu { path: &self.path })?;
+        file.read_exact(&mut data)
+            .context(IoSnafu { path: &self.path })?;
 
         let mut data = data.as_slice();
         if self.embed_names {
@@ -244,7 +266,10 @@ impl ArchiveSet {
     /// If an archive cannot be opened.
     pub fn open<P: AsRef<Path>>(paths: impl IntoIterator<Item = P>) -> Result<Self, Error> {
         Ok(Self {
-            archives: paths.into_iter().map(Archive::open).collect::<Result<_, _>>()?,
+            archives: paths
+                .into_iter()
+                .map(Archive::open)
+                .collect::<Result<_, _>>()?,
         })
     }
 

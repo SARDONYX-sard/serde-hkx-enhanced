@@ -9,7 +9,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     let path = std::env::args()
         .nth(1)
         .ok_or("usage: nif_dump <file.nif>")?;
-    let scene = serde_nif::from_bytes(&std::fs::read(path)?)?;
+    let bytes = std::fs::read(path)?;
+    let scene = serde_nif::from_bytes(&bytes)?;
 
     println!("nodes: {}", scene.nodes.len());
     for (index, node) in scene.nodes.iter().enumerate() {

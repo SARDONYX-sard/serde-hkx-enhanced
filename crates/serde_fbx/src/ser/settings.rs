@@ -10,7 +10,6 @@ pub(super) const FILE_ID: [u8; 16] = [
     0x28, 0xb3, 0x2a, 0xeb, 0xb6, 0x24, 0xcc, 0xc2, 0xbf, 0xc8, 0xb0, 0x2a, 0xa9, 0x2b, 0xfc, 0xf1,
 ];
 
-
 /// `FBXHeaderExtension`: file format information.
 ///
 /// - `FBXHeaderVersion`: version of this header block (1003 since FBX 2006);
@@ -127,4 +126,3 @@ fn time_mode(fps: f64) -> i32 {
         .find(|(rate, _)| (rate - fps).abs() < 1.0e-6)
         .map_or(14, |&(_, mode)| mode)
 }
-

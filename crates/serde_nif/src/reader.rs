@@ -1,5 +1,7 @@
 //! Little-endian cursor over NIF bytes.
 
+use std::borrow::Cow;
+
 use crate::error::{Error, UnexpectedEofSnafu};
 
 pub struct Reader<'a> {
@@ -97,13 +99,13 @@ impl<'a> Reader<'a> {
     }
 
     /// `u8 length` + bytes (the length includes a trailing NUL).
-    pub fn short_string(&mut self) -> Result<String, Error> {
+    pub fn short_string(&mut self) -> Result<Cow<'a, str>, Error> {
         let len = self.u8()? as usize;
         Ok(trim_nul(self.take(len)?))
     }
 
     /// `u32 length` + bytes.
-    pub fn sized_string(&mut self) -> Result<String, Error> {
+    pub fn sized_string(&mut self) -> Result<Cow<'a, str>, Error> {
         let len = self.u32()? as usize;
         Ok(trim_nul(self.take(len)?))
     }
@@ -122,9 +124,10 @@ impl<'a> Reader<'a> {
     }
 }
 
-fn trim_nul(bytes: &[u8]) -> String {
+/// Borrows the input unless it is not UTF-8 (Windows-1252 names do occur).
+fn trim_nul(bytes: &[u8]) -> Cow<'_, str> {
     let end = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
-    String::from_utf8_lossy(&bytes[..end]).into_owned()
+    String::from_utf8_lossy(&bytes[..end])
 }
 
 fn half_to_f32(half: u16) -> f32 {

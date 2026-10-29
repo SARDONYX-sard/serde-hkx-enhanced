@@ -142,7 +142,6 @@ impl<'a> SceneBuilder<'a> {
         Ok(models)
     }
 
-
     /// `Definitions`: number of objects per type.
     ///
     /// ```text
@@ -188,7 +187,6 @@ impl<'a> SceneBuilder<'a> {
     }
 }
 
-
 /// World matrix of every skeleton model in its reference pose.
 pub(super) fn rest_world_matrices(skeleton: &Skeleton, models: &[i64]) -> HashMap<i64, Mat4> {
     let mut world: Vec<Mat4> = Vec::with_capacity(skeleton.bones.len());
@@ -205,7 +203,10 @@ pub(super) fn rest_world_matrices(skeleton: &Skeleton, models: &[i64]) -> HashMa
 /// Converts a Havok transform to FBX translation, XYZ Euler degrees, and scale.
 ///
 /// `prev_euler` keeps consecutive keys on the closest equivalent Euler angles.
-pub(super) fn transform_to_trs(transform: &QsTransform, prev_euler: Option<[f64; 3]>) -> [[f64; 3]; 3] {
+pub(super) fn transform_to_trs(
+    transform: &QsTransform,
+    prev_euler: Option<[f64; 3]>,
+) -> [[f64; 3]; 3] {
     let t = &transform.transition;
     let s = &transform.scale;
 
@@ -246,4 +247,3 @@ pub(super) fn model_properties(t: [f64; 3], r: [f64; 3], s: [f64; 3]) -> Propert
         .lcl("Lcl Rotation", r)
         .lcl("Lcl Scaling", s)
 }
-

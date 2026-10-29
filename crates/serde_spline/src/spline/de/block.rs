@@ -11,11 +11,13 @@ use core::mem::size_of;
 use havok_types::{QsTransform, Quaternion};
 use rig_math::QuatA16;
 
-use crate::spline::bspline::{evaluate_quat_track, evaluate_vector_track};
 use super::reader::Reader;
 use super::tracks::{read_transform_mask, read_transform_track};
 use crate::error::{Error, ReadContext};
-use crate::spline::track::{SplineTrackQuat, SplineTrackVector, TransformMask, TransformSplineBlock};
+use crate::spline::bspline::{evaluate_quat_track, evaluate_vector_track};
+use crate::spline::track::{
+    SplineTrackQuat, SplineTrackVector, TransformMask, TransformSplineBlock,
+};
 
 impl TransformSplineBlock {
     /// Decompresses one transform spline block.

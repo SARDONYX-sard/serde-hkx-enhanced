@@ -238,8 +238,12 @@ impl<'a> Scene<'a> {
                 }
                 "AnimationCurve" => {
                     let array = |name: &str| object.child(name).and_then(|e| e.prop(0));
-                    let mut times = array("KeyTime").and_then(Value::as_i64_array).unwrap_or_default();
-                    let mut values = array("KeyValueFloat").and_then(Value::as_f64_array).unwrap_or_default();
+                    let mut times = array("KeyTime")
+                        .and_then(Value::as_i64_array)
+                        .unwrap_or_default();
+                    let mut values = array("KeyValueFloat")
+                        .and_then(Value::as_f64_array)
+                        .unwrap_or_default();
                     // Malformed files may disagree on the key count; keep the common prefix.
                     let len = times.len().min(values.len());
                     truncate(&mut times, len);

@@ -102,7 +102,12 @@ fn write_node(out: &mut Vec<u8>, node: &Node<'_>) {
 }
 
 fn write_prop(out: &mut Vec<u8>, prop: &Property<'_>) {
-    fn array<T, const N: usize>(out: &mut Vec<u8>, code: u8, values: &[T], to_bytes: impl Fn(&T) -> [u8; N]) {
+    fn array<T, const N: usize>(
+        out: &mut Vec<u8>,
+        code: u8,
+        values: &[T],
+        to_bytes: impl Fn(&T) -> [u8; N],
+    ) {
         out.push(code);
         out.extend_from_slice(&(values.len() as u32).to_le_bytes());
         out.extend_from_slice(&0u32.to_le_bytes()); // encoding: uncompressed

@@ -109,7 +109,11 @@ impl<'a> Parser<'a> {
             self.pos += 1;
         }
 
-        Ok(Element { name, props, children })
+        Ok(Element {
+            name,
+            props,
+            children,
+        })
     }
 
     /// `{ a: v, v, ... }`: integers unless any value has a fraction/exponent.
@@ -199,7 +203,9 @@ fn tokenize(text: &str) -> Vec<Token<'_>> {
                 if bytes.get(i) == Some(&b':') {
                     tokens.push(Token::Key(word));
                     i += 1;
-                } else if word.starts_with(|c: char| c.is_ascii_digit() || matches!(c, '-' | '+' | '.')) {
+                } else if word
+                    .starts_with(|c: char| c.is_ascii_digit() || matches!(c, '-' | '+' | '.'))
+                {
                     tokens.push(Token::Number(word));
                 } else if word.is_empty() {
                     i += 1; // stray ':'
@@ -223,8 +229,14 @@ mod tests {
         let model = nodes[0].child("Model").unwrap();
         assert_eq!(model.props[0], Value::I64(1));
         assert_eq!(model.props[1].as_str(), Some("Model::Pelvis"));
-        assert!(matches!(model.props[1], Value::String(Cow::Borrowed(_))), "strings borrow the input");
+        assert!(
+            matches!(model.props[1], Value::String(Cow::Borrowed(_))),
+            "strings borrow the input"
+        );
         assert_eq!(model.child("Shading").unwrap().props[0], Value::Bool(true));
-        assert_eq!(model.child("KeyTime").unwrap().props[0], Value::I64Array(vec![0, 10]));
+        assert_eq!(
+            model.child("KeyTime").unwrap().props[0],
+            Value::I64Array(vec![0, 10])
+        );
     }
 }

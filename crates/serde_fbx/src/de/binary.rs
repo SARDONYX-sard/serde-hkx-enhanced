@@ -87,7 +87,10 @@ impl<'a> Reader<'a> {
             return Ok(None);
         }
         if end > self.data.len() {
-            return Err(load_error(format!("node at {:#x} exceeds the file", self.pos)));
+            return Err(load_error(format!(
+                "node at {:#x} exceeds the file",
+                self.pos
+            )));
         }
 
         let name = String::from_utf8_lossy(self.take(name_len)?);
@@ -106,7 +109,11 @@ impl<'a> Reader<'a> {
         }
         self.pos = end;
 
-        Ok(Some(Element { name, props, children }))
+        Ok(Some(Element {
+            name,
+            props,
+            children,
+        }))
     }
 
     fn value(&mut self) -> Result<Value<'a>, Error> {
@@ -132,9 +139,13 @@ impl<'a> Reader<'a> {
                 Value::Raw(self.take(len)?)
             }
             b'b' => Value::I64Array(self.array_values(1, |b| i64::from(b[0]))?),
-            b'i' => Value::I64Array(self.array_values(4, |b| i64::from(i32::from_le_bytes(le(b))))?),
+            b'i' => {
+                Value::I64Array(self.array_values(4, |b| i64::from(i32::from_le_bytes(le(b))))?)
+            }
             b'l' => Value::I64Array(self.array_values(8, |b| i64::from_le_bytes(le(b)))?),
-            b'f' => Value::F64Array(self.array_values(4, |b| f64::from(f32::from_le_bytes(le(b))))?),
+            b'f' => {
+                Value::F64Array(self.array_values(4, |b| f64::from(f32::from_le_bytes(le(b))))?)
+            }
             b'd' => Value::F64Array(self.array_values(8, |b| f64::from_le_bytes(le(b)))?),
             code => {
                 return Err(load_error(format!(
@@ -147,7 +158,11 @@ impl<'a> Reader<'a> {
     }
 
     /// `u32 count, u32 encoding (0 raw / 1 zlib), u32 byte length, data`.
-    fn array_values<T>(&mut self, stride: usize, decode: impl Fn(&[u8]) -> T) -> Result<Vec<T>, Error> {
+    fn array_values<T>(
+        &mut self,
+        stride: usize,
+        decode: impl Fn(&[u8]) -> T,
+    ) -> Result<Vec<T>, Error> {
         let count = self.u32()? as usize;
         let encoding = self.u32()?;
         let len = self.u32()? as usize;

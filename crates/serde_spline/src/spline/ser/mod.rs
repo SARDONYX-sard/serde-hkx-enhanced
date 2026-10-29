@@ -199,7 +199,6 @@ fn write_transform_mask(mask: TransformMask, out: &mut Vec<u8>) {
     out.push(mask.scale_types);
 }
 
-
 /// Writes the spline knot vector.
 ///
 /// # Errors

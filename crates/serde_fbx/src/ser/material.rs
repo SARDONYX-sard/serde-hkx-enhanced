@@ -40,7 +40,12 @@ impl<'a> SceneBuilder<'a> {
     ///
     /// `RelativeFilename` is relative to the FBX file and is what Blender
     /// tries first; `FileName` is the fallback (usually absolute).
-    pub(super) fn add_material(&mut self, model: i64, mesh: &'a Mesh, videos: &mut HashMap<String, i64>) {
+    pub(super) fn add_material(
+        &mut self,
+        model: i64,
+        mesh: &'a Mesh,
+        videos: &mut HashMap<String, i64>,
+    ) {
         let material = self.new_id();
         self.objects.push(
             Node::new("Material")
@@ -131,7 +136,9 @@ impl<'a> SceneBuilder<'a> {
                         .value("Filename", texture.path.as_str())
                         .value("RelativeFilename", texture.path.as_str());
                     if let Some(content) = &texture.content {
-                        node.push(Node::new("Content").prop(Property::Raw(content.as_slice().into())));
+                        node.push(
+                            Node::new("Content").prop(Property::Raw(content.as_slice().into())),
+                        );
                     }
                     self.objects.push(node);
                     self.videos += 1;
@@ -142,5 +149,4 @@ impl<'a> SceneBuilder<'a> {
             self.connect(video, id);
         }
     }
-
 }

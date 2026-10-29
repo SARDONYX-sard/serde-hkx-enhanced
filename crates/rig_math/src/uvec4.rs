@@ -5,7 +5,10 @@
 
 #![allow(clippy::missing_const_for_fn, reason = "SIMD intrinsics are not const")]
 
-use core::{fmt, ops::{BitAnd, BitOr, BitXor}};
+use core::{
+    fmt,
+    ops::{BitAnd, BitOr, BitXor},
+};
 
 use crate::{IVec4A16, Vec4A16};
 

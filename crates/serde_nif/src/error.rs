@@ -8,15 +8,15 @@ pub enum Error {
     #[snafu(display("not a NIF file: missing header line"))]
     InvalidHeader,
 
-    /// Only Skyrim LE/SE files (20.2.0.7, user version 12) are supported.
+    /// The header describes block layouts this crate does not read.
     #[snafu(display(
-        "unsupported NIF version {version:#010x} (user {user_version}, bs {bs_version}); \
-         only Skyrim LE/SE (20.2.0.7, user 12) is supported"
+        "unsupported NIF version {version:#010x} (user {user_version}, bs {bs_version}); expected {expected}"
     ))]
     UnsupportedVersion {
         version: u32,
         user_version: u32,
         bs_version: u32,
+        expected: &'static str,
     },
 
     /// The data ended before a value could be read.

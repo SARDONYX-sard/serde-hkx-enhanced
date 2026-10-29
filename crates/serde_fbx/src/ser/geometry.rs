@@ -85,7 +85,10 @@ pub(super) fn geometry_node(id: i64, mesh: &Mesh) -> Node<'static> {
                 .value("ReferenceInformationType", "Direct")
                 .value(
                     "Normals",
-                    mesh.normals.iter().flat_map(|n| n.map(f64::from)).collect::<Vec<f64>>(),
+                    mesh.normals
+                        .iter()
+                        .flat_map(|n| n.map(f64::from))
+                        .collect::<Vec<f64>>(),
                 ),
         );
         layer.push(layer_element("LayerElementNormal"));
@@ -110,7 +113,10 @@ pub(super) fn geometry_node(id: i64, mesh: &Mesh) -> Node<'static> {
                 .value("ReferenceInformationType", "IndexToDirect")
                 .value(
                     "UV",
-                    mesh.uvs.iter().flat_map(|uv| uv.map(f64::from)).collect::<Vec<f64>>(),
+                    mesh.uvs
+                        .iter()
+                        .flat_map(|uv| uv.map(f64::from))
+                        .collect::<Vec<f64>>(),
                 )
                 .value("UVIndex", uv_index),
         );

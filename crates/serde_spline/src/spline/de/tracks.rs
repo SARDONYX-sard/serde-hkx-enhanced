@@ -32,9 +32,7 @@ pub(super) fn read_transform_mask(reader: &mut Reader<'_>) -> Result<TransformMa
 /// The original floating-point range represented by the quantized values.
 ///
 /// A quantized control point is stored as an integer, not as an f32:
-///
-///     integer -> normalized [0, 1] -> [min, max]
-///
+/// `integer -> normalized [0, 1] -> [min, max]`.
 /// Without these two values the original numerical scale could not be
 /// reconstructed.
 #[derive(Clone, Copy)]

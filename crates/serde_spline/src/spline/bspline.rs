@@ -70,7 +70,12 @@ pub fn find_knot_span(
 ///
 /// # Errors
 /// If the degree is unsupported or `span` does not fit the knot vector.
-pub fn basis(span: usize, degree: usize, t: f32, knots: &[f32]) -> Result<[f32; MAX_DEGREE + 1], Error> {
+pub fn basis(
+    span: usize,
+    degree: usize,
+    t: f32,
+    knots: &[f32],
+) -> Result<[f32; MAX_DEGREE + 1], Error> {
     if degree > MAX_DEGREE {
         return Err(Error::InvalidDegree(degree as u8));
     }
@@ -101,12 +106,23 @@ pub fn basis(span: usize, degree: usize, t: f32, knots: &[f32]) -> Result<[f32; 
 ///
 /// # Errors
 /// If the span, degree or knot vector does not match the control points.
-pub fn evaluate<T>(span: usize, degree: usize, t: f32, knots: &[f32], control_points: &[T]) -> Result<T, Error>
+pub fn evaluate<T>(
+    span: usize,
+    degree: usize,
+    t: f32,
+    knots: &[f32],
+    control_points: &[T],
+) -> Result<T, Error>
 where
     T: Copy + Add<Output = T> + Mul<f32, Output = T>,
 {
     let weights = basis(span, degree, t, knots)?;
-    let point = |i: usize| control_points.get(span - i).copied().ok_or(Error::InvalidControlPointIndex);
+    let point = |i: usize| {
+        control_points
+            .get(span - i)
+            .copied()
+            .ok_or(Error::InvalidControlPointIndex)
+    };
 
     let mut value = point(0)? * weights[0];
     for (i, &weight) in weights.iter().enumerate().take(degree + 1).skip(1) {
@@ -133,7 +149,12 @@ pub fn evaluate_vector_track(track: &SplineDynamicTrackVector, t: f32) -> Result
         }
         let span = match span {
             Some(span) => span,
-            None => *span.insert(find_knot_span(degree, t, control_points.len(), &track.knots)?),
+            None => *span.insert(find_knot_span(
+                degree,
+                t,
+                control_points.len(),
+                &track.knots,
+            )?),
         };
         *axis = evaluate(span, degree, t, &track.knots, control_points)?;
     }
@@ -164,9 +185,19 @@ mod tests {
         // Degree 1, clamped: the spline passes through every control point.
         let knots = [0.0, 0.0, 1.0, 2.0, 2.0];
         let points = [10.0f32, 20.0, 40.0];
-        for (t, expected) in [(0.0, 10.0), (0.5, 15.0), (1.0, 20.0), (1.5, 30.0), (2.0, 40.0)] {
+        for (t, expected) in [
+            (0.0, 10.0),
+            (0.5, 15.0),
+            (1.0, 20.0),
+            (1.5, 30.0),
+            (2.0, 40.0),
+        ] {
             let span = find_knot_span(1, t, points.len(), &knots).unwrap();
-            assert_eq!(evaluate(span, 1, t, &knots, &points).unwrap(), expected, "t = {t}");
+            assert_eq!(
+                evaluate(span, 1, t, &knots, &points).unwrap(),
+                expected,
+                "t = {t}"
+            );
         }
     }
 

@@ -151,7 +151,6 @@ pub(super) fn encode_dynamic_rotation(
     Ok(())
 }
 
-
 /// Makes a quaternion sequence sign-continuous.
 ///
 /// `q` and `-q` represent the same rotation. Havok spline interpolation,
@@ -355,4 +354,3 @@ pub(super) fn write_quat_three_comp48(out: &mut Vec<u8>, quaternion: [f32; 4]) {
     out.extend_from_slice(&(y as u16).to_le_bytes());
     out.extend_from_slice(&(z as u16).to_le_bytes());
 }
-

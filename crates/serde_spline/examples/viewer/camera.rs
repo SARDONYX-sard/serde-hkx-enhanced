@@ -2,7 +2,6 @@
 
 use eframe::egui;
 
-
 /// A simple orbit ("arcball-style") camera: the eye sits on a sphere of
 /// `distance` radius around `target`, driven by `yaw`/`pitch`. Good enough
 /// for previewing a skeleton without pulling in a full math crate.

@@ -100,10 +100,7 @@ fn validate_fps(fps: f32) -> Result<(), Error> {
 fn build_bone_mapping(scene: &Scene, skeleton: &Skeleton) -> Result<Vec<i64>, Error> {
     let mut models_by_name: HashMap<&str, Vec<i64>> = HashMap::new();
     for (&id, model) in &scene.models {
-        models_by_name
-            .entry(model.name)
-            .or_default()
-            .push(id);
+        models_by_name.entry(model.name).or_default().push(id);
     }
 
     skeleton

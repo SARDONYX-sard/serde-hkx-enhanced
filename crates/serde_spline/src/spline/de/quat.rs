@@ -16,18 +16,15 @@ use crate::spline::track::QuantizationType;
 
 /// The 32-bit representation does not store four independent floats.
 ///
-/// A normalized quaternion has:
-///
-///     x² + y² + z² + w² = 1
-///
-/// so only three degrees of freedom are necessary. Havok packs the
-/// information needed to reconstruct those values into a 32-bit word.
+/// A normalized quaternion has `x² + y² + z² + w² = 1`, so only three
+/// degrees of freedom are necessary. Havok packs the information needed to
+/// reconstruct those values into a 32-bit word.
 ///
 /// The bit fields contain:
 ///
-///     - a magnitude-related value,
-///     - angular information,
-///     - sign bits for the reconstructed components.
+/// - a magnitude-related value,
+/// - angular information,
+/// - sign bits for the reconstructed components.
 ///
 /// The constants below are therefore part of the binary encoding and
 /// should not be replaced with a generic "epsilon" or generic
@@ -158,7 +155,10 @@ pub(super) fn read48_quat(reader: &mut Reader<'_>) -> Result<QuatA16, Error> {
     Ok(QuatA16::from_vec4(value))
 }
 
-pub(super) fn read_quat(reader: &mut Reader<'_>, quantization: QuantizationType) -> Result<QuatA16, Error> {
+pub(super) fn read_quat(
+    reader: &mut Reader<'_>,
+    quantization: QuantizationType,
+) -> Result<QuatA16, Error> {
     #[cfg(feature = "tracing")]
     tracing::trace!(quantization = ?quantization, "enter read_quat");
 
@@ -176,4 +176,3 @@ pub(super) fn read_quat(reader: &mut Reader<'_>, quantization: QuantizationType)
         _ => Ok(QuatA16::identity()),
     }
 }
-

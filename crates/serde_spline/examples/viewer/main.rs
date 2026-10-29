@@ -83,12 +83,11 @@ impl eframe::App for App {
 
                     match load_animation(&self.anim_path, &self.skeleton_path) {
                         Ok((clip, skeleton)) => {
-                            let (center, radius) = bounding_sphere(
-                                skeleton.bones.iter().map(|bone| {
+                            let (center, radius) =
+                                bounding_sphere(skeleton.bones.iter().map(|bone| {
                                     let t = &bone.reference_pose.transition;
                                     (t.x, t.y, t.z)
-                                }),
-                            );
+                                }));
 
                             self.camera.frame_bounds(center, radius);
                             self.clip = Some(clip);
@@ -151,7 +150,12 @@ impl eframe::App for App {
 
         egui::Panel::bottom("timeline").show(ui, |ui| {
             let Some(clip) = &self.clip else { return };
-            if timeline_ui(ui, &mut self.time, f64::from(clip.duration), clip.num_frames as usize) {
+            if timeline_ui(
+                ui,
+                &mut self.time,
+                f64::from(clip.duration),
+                clip.num_frames as usize,
+            ) {
                 self.playing = false;
             }
         });

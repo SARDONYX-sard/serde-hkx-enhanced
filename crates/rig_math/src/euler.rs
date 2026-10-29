@@ -65,6 +65,9 @@ mod tests {
 
     #[test]
     fn compatible_euler_unwraps() {
-        assert_eq!(compatible_euler([-179.0, 0.0, 0.0], [179.0, 0.0, 0.0]), [181.0, 0.0, 0.0]);
+        assert_eq!(
+            compatible_euler([-179.0, 0.0, 0.0], [179.0, 0.0, 0.0]),
+            [181.0, 0.0, 0.0]
+        );
     }
 }

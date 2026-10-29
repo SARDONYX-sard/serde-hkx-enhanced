@@ -96,7 +96,10 @@ fn write_prop(out: &mut String, prop: &Property<'_>) {
             }
             out.push('"');
         }
-        Property::I32Array(_) | Property::I64Array(_) | Property::F32Array(_) | Property::F64Array(_) => {
+        Property::I32Array(_)
+        | Property::I64Array(_)
+        | Property::F32Array(_)
+        | Property::F64Array(_) => {
             unreachable!("array properties are written by write_node")
         }
     }

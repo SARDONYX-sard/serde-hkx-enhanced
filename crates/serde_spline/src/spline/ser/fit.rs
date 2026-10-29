@@ -119,14 +119,18 @@ pub(super) fn make_clamped_knots(n_cp: usize, degree: usize) -> Result<Vec<u8>, 
     Ok(knots)
 }
 
-
 /// Evaluates every B-spline basis function at `t`: one row of the fitting
 /// matrix (only `degree + 1` entries are non-zero).
 ///
 /// # Errors
 ///
 /// Returns [`Error`] if the knot vector does not match `n_cp` and `degree`.
-pub(super) fn bspline_basis_row(degree: usize, t: f32, n_cp: usize, knots: &[f32]) -> Result<Vec<f32>, Error> {
+pub(super) fn bspline_basis_row(
+    degree: usize,
+    t: f32,
+    n_cp: usize,
+    knots: &[f32],
+) -> Result<Vec<f32>, Error> {
     if degree == 0 {
         return Err(Error::InvalidData("B-spline degree must not be zero"));
     }
@@ -228,7 +232,6 @@ pub(super) fn solve_banded(matrix: &mut [Vec<f32>], rhs: &mut [f32]) -> Result<(
     Ok(())
 }
 
-
 /// Fits four quaternion components independently to the same B-spline.
 ///
 /// # Errors
@@ -273,4 +276,3 @@ pub(super) fn fit_bspline_quaternion(
 
     Ok(result)
 }
-

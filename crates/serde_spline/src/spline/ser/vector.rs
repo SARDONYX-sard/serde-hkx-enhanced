@@ -11,8 +11,8 @@ use super::fit::{fit_bspline_scalar, make_clamped_knots};
 use super::{align4, encode_knots};
 use crate::error::Error;
 use crate::spline::track::{
-    QuantizationType, SplineDynamicTrackVector, SplineTrackType, SplineTrackVector,
-    TransformMask, TransformTrack, TransformType,
+    QuantizationType, SplineDynamicTrackVector, SplineTrackType, SplineTrackVector, TransformMask,
+    TransformTrack, TransformType,
 };
 
 /// Encodes a position track.
@@ -344,7 +344,6 @@ pub(super) fn encode_dynamic_vector(
     Ok(())
 }
 
-
 /// Writes one scalar using Havok's scalar quantization.
 ///
 /// # Errors
@@ -389,4 +388,3 @@ pub(super) fn write_quantized_scalar(
 
     Ok(())
 }
-

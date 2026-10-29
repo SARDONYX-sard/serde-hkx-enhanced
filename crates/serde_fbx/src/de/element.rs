@@ -99,7 +99,8 @@ pub fn parse(bytes: &[u8]) -> Result<Vec<Element<'_>>, Error> {
     if bytes.starts_with(binary::MAGIC) {
         binary::parse(bytes)
     } else {
-        let text = std::str::from_utf8(bytes).map_err(|_| load_error("not a binary FBX and not UTF-8 text"))?;
+        let text = std::str::from_utf8(bytes)
+            .map_err(|_| load_error("not a binary FBX and not UTF-8 text"))?;
         ascii::parse(text)
     }
 }

@@ -30,7 +30,13 @@ impl<'a> SceneBuilder<'a> {
     /// here), rotation in XYZ Euler degrees, scale as a factor.
     ///
     /// `times`: KTime of every frame, see [`key_times`].
-    pub(super) fn add_animation(&mut self, models: &[i64], animation: &Animation, times: &'a [i64], take_name: &str) {
+    pub(super) fn add_animation(
+        &mut self,
+        models: &[i64],
+        animation: &Animation,
+        times: &'a [i64],
+        take_name: &str,
+    ) {
         let stop = times.last().copied().unwrap_or(0);
 
         let stack = self.new_id();
@@ -104,7 +110,8 @@ impl<'a> SceneBuilder<'a> {
                         .iter()
                         .map(|sample| sample[channel][axis] as f32)
                         .collect();
-                    self.objects.push(anim_curve(curve, default[axis], times, values));
+                    self.objects
+                        .push(anim_curve(curve, default[axis], times, values));
                     self.curves += 1;
                     self.connect_prop(curve, curve_node, axis_name);
                 }
@@ -181,4 +188,3 @@ pub(super) fn snap_frame_rate(fps: f64) -> f64 {
         fps
     }
 }
-

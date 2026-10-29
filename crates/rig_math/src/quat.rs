@@ -5,7 +5,10 @@
 
 #![allow(clippy::missing_const_for_fn, reason = "SIMD intrinsics are not const")]
 
-use core::{fmt, ops::{Add, Mul, Sub}};
+use core::{
+    fmt,
+    ops::{Add, Mul, Sub},
+};
 
 use havok_types::Quaternion;
 

@@ -148,7 +148,11 @@ pub enum Format {
 /// - If the declared frame count does not match the number of sampled frames.
 /// - If a sampled frame does not contain one transform for every skeleton bone.
 /// - If a bone has an invalid parent index.
-pub fn to_fbx(animation: &Animation, skeleton: &Skeleton, config: Config<'_>) -> Result<Vec<u8>, Error> {
+pub fn to_fbx(
+    animation: &Animation,
+    skeleton: &Skeleton,
+    config: Config<'_>,
+) -> Result<Vec<u8>, Error> {
     let Config {
         fps,
         format,
@@ -204,7 +208,6 @@ pub fn to_fbx(animation: &Animation, skeleton: &Skeleton, config: Config<'_>) ->
         Format::FbxAscii => ascii::to_ascii(&nodes).into_bytes(),
     })
 }
-
 
 fn validate_animation(skeleton: &Skeleton, animation: &Animation) -> Result<(), Error> {
     let bone_count = skeleton.bones.len();

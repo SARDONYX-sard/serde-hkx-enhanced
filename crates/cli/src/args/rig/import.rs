@@ -428,12 +428,12 @@ async fn import_animation(
     let converted = match extension.as_deref() {
         #[cfg(feature = "kf")]
         Some("kf") => {
-            let config = niflib_animation::serde_kf::DeConfig {
+            let config = serde_kf::DeConfig {
                 annotations: read_annotations(&input.path).await?,
                 fps,
                 format,
             };
-            niflib_animation::serde_kf::from_kf(&bytes, skeleton, config)?
+            serde_kf::from_kf(&bytes, skeleton, config)?
         }
 
         #[cfg(not(feature = "kf"))]

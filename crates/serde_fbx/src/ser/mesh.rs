@@ -186,10 +186,7 @@ impl<'a> SceneBuilder<'a> {
                         .value("Indexes", cluster.indices.as_slice())
                         .value("Weights", cluster.weights.as_slice())
                         .value("Transform", transform.to_fbx_array())
-                        .value(
-                            "TransformLink",
-                            cluster.bind.to_fbx_array(),
-                        ),
+                        .value("TransformLink", cluster.bind.to_fbx_array()),
                 );
                 self.deformers += 1;
                 self.connect(id, skin);
@@ -203,7 +200,6 @@ impl<'a> SceneBuilder<'a> {
         }
         missing
     }
-
 
     /// `Pose` of type `BindPose`: world matrices at the time the mesh was bound.
     ///

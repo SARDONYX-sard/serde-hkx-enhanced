@@ -1,0 +1,29 @@
+[package]
+name = "serde_kf"
+version = "0.1.0"
+description = "Convert Havok animations to and from Gamebryo KF files without C/C++ libraries."
+
+authors.workspace = true
+categories = ["development-tools"]
+edition.workspace = true
+keywords = ["skyrim"]
+license.workspace = true
+readme = "../../README.md"
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+havok_types = { workspace = true }
+serde_hkx_features = { workspace = true }
+tracing = { workspace = true, optional = true }
+
+# workspace members
+serde_nif = { workspace = true }
+serde_spline = { workspace = true }
+
+[features]
+# Enable tracing logging
+tracing = ["dep:tracing", "serde_spline/tracing"]
+
+[lints]
+workspace = true

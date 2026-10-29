@@ -23,7 +23,9 @@ fn world_positions(local: &[havok_types::QsTransform], skeleton: &Skeleton) -> V
     let mut world: Vec<Mat4> = Vec::with_capacity(local.len());
     for (transform, bone) in local.iter().zip(&skeleton.bones) {
         let local = Mat4::from_qs_transform(transform);
-        let parent = usize::try_from(bone.parent_index).ok().and_then(|p| world.get(p));
+        let parent = usize::try_from(bone.parent_index)
+            .ok()
+            .and_then(|p| world.get(p));
         world.push(parent.map_or(local, |parent| *parent * local));
     }
     world.iter().map(Mat4::get_translation).collect()

@@ -4,8 +4,10 @@
 // - https://github.com/BadDogSkyrim/PyNifly/blob/7fd4644f5a6416c1502983b7d49a853eb0d24509/io_scene_nifly/hkx/skeleton_hkx.py
 use crate::error::Error;
 use crate::spline::SplineDecompressor;
-use crate::spline::math::{
-    QuantizationType, QuatA16, SplineDynamicTrackQuat, SplineDynamicTrackVector, SplineStaticTrack,
+use rig_math::QuatA16;
+
+use crate::spline::track::{
+    QuantizationType, SplineDynamicTrackQuat, SplineDynamicTrackVector, SplineStaticTrack,
     SplineTrackQuat, SplineTrackType, SplineTrackVector, TransformMask, TransformSplineBlock,
     TransformTrack, TransformType,
 };

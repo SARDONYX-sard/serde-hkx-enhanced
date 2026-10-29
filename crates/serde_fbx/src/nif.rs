@@ -34,7 +34,7 @@ pub fn meshes_from_nif(scene: &Scene, load_texture: impl Fn(&str) -> Option<Vec<
             );
 
             Mesh {
-                name: shape.name.clone(),
+                name: shape.name.to_string(),
                 transform: world,
                 vertices: shape.vertices.clone(),
                 normals: shape.normals.clone(),
@@ -79,7 +79,7 @@ fn skin_clusters(skin: &Skin, world: Mat4) -> Vec<Cluster> {
                 })
                 .unzip();
             Cluster {
-                bone: name.clone(),
+                bone: name.to_string(),
                 bind: world * skin_to_bone.inverse(),
                 indices,
                 weights,
@@ -96,7 +96,7 @@ fn rigid_cluster(scene: &Scene, shape: &Shape) -> Vec<Cluster> {
         return Vec::new();
     };
     vec![Cluster {
-        bone: node.name.clone(),
+        bone: node.name.to_string(),
         bind: to_mat4(&scene.world_transform(parent)),
         indices: (0..shape.vertices.len() as i32).collect(),
         weights: vec![1.0; shape.vertices.len()],

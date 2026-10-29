@@ -33,7 +33,7 @@ tracing = { workspace = true }
 tracing-subscriber = "0.3.20"
 
 # workspace members
-niflib_animation = { workspace = true, features = ["tracing"], optional = true }
+serde_kf = { workspace = true, features = ["tracing"], optional = true }
 serde_fbx = { workspace = true, features = ["tracing"], optional = true }
 serde_bsa = { workspace = true }
 serde_nif = { workspace = true, optional = true }
@@ -57,7 +57,7 @@ color = []
 # Extra output format(json, toml, yaml)
 extra_fmt = ["serde_hkx_features/extra_fmt"]
 
-kf = ["dep:niflib_animation"]
+kf = ["dep:serde_kf"]
 fbx = ["dep:serde_fbx", "dep:serde_nif"]
 
 # The patch time was reduced by 4secs.

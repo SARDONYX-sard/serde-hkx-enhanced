@@ -26,9 +26,11 @@
 
 use std::collections::HashMap;
 
-use super::node::{Node, Properties70, Property, object_name};
-use super::{SceneBuilder, model_properties, quat_to_euler};
-use crate::math::Mat4;
+use super::geometry::geometry_node;
+use super::node::{Node, Property, object_name};
+use rig_math::{Mat4, quat_to_euler_xyz};
+
+use super::scene::{SceneBuilder, model_properties};
 
 /// A triangle mesh to place in the FBX scene.
 #[derive(Debug, Clone, Default)]
@@ -57,7 +59,7 @@ pub enum TextureSlot {
 
 impl TextureSlot {
     /// `Material` property the texture connects to.
-    const fn property(self) -> &'static str {
+    pub(super) const fn property(self) -> &'static str {
         match self {
             Self::Diffuse => "DiffuseColor",
             Self::Normal => "NormalMap",
@@ -87,7 +89,7 @@ pub struct Cluster {
     pub weights: Vec<f64>,
 }
 
-impl SceneBuilder {
+impl<'a> SceneBuilder<'a> {
     /// Adds meshes skinned to the skeleton `models` (`bone name -> model id`).
     ///
     /// `rest_world`: world matrix of every skeleton model at rest, used for
@@ -96,7 +98,7 @@ impl SceneBuilder {
     /// Returns the names of cluster bones missing from the skeleton.
     pub(super) fn add_meshes(
         &mut self,
-        meshes: &[Mesh],
+        meshes: &'a [Mesh],
         models: &HashMap<String, i64>,
         rest_world: &HashMap<i64, Mat4>,
     ) -> Vec<String> {
@@ -112,7 +114,7 @@ impl SceneBuilder {
             let geometry = self.new_id();
 
             let (t, q, s) = mesh.transform.decompose();
-            let r = quat_to_euler(q);
+            let r = quat_to_euler_xyz(q);
             self.objects.push(
                 Node::new("Model")
                     .prop(model)
@@ -181,13 +183,10 @@ impl SceneBuilder {
                         .prop("Cluster")
                         .value("Version", 100)
                         .child(Node::new("UserData").prop("").prop(""))
-                        .value("Indexes", Property::I32Array(cluster.indices.clone()))
-                        .value("Weights", Property::F64Array(cluster.weights.clone()))
-                        .value("Transform", Property::F64Array(transform.to_fbx_array()))
-                        .value(
-                            "TransformLink",
-                            Property::F64Array(cluster.bind.to_fbx_array()),
-                        ),
+                        .value("Indexes", cluster.indices.as_slice())
+                        .value("Weights", cluster.weights.as_slice())
+                        .value("Transform", transform.to_fbx_array())
+                        .value("TransformLink", cluster.bind.to_fbx_array()),
                 );
                 self.deformers += 1;
                 self.connect(id, skin);
@@ -200,142 +199,6 @@ impl SceneBuilder {
             self.add_bind_pose(&bind_pose);
         }
         missing
-    }
-
-    /// `Material <- Texture <- Video`, connected to `model`.
-    ///
-    /// ```text
-    /// Material: <id>, "Material::<mesh>", "" {
-    ///     Version: 102
-    ///     ShadingModel: "phong"                ; "lambert" or "phong"
-    ///     Properties70: {
-    ///         P: "DiffuseColor", "Color", "", "A", 1, 1, 1    ; multiplied with the diffuse texture
-    ///         P: "DiffuseFactor", "Number", "", "A", 1
-    ///     }
-    /// }
-    /// Texture: <id>, "Texture::highlandcow.dds", "" {
-    ///     Type: "TextureVideoClip"   Version: 202
-    ///     TextureName: "Texture::highlandcow.dds"
-    ///     Properties70: { P: "UVSet", "KString", "", "", "UVMap" }  ; LayerElementUV name to use
-    ///     Media: "Video::highlandcow.dds"      ; name of the Video object
-    ///     FileName / RelativeFilename: "textures/actors/cow/highlandcow.dds"
-    ///     ModelUVTranslation: 0, 0   ModelUVScaling: 1, 1   ; UV offset / tiling
-    ///     Texture_Alpha_Source: "None"   Cropping: 0, 0, 0, 0
-    /// }
-    /// Video: <id>, "Video::highlandcow.dds", "Clip" {
-    ///     Type: "Clip"
-    ///     Properties70: { P: "Path", "KString", "XRefUrl", "", "<path>" }
-    ///     Filename / RelativeFilename: "<path>"
-    ///     Content: <raw file bytes>            ; optional embedded image
-    /// }
-    /// C: "OO", <material>, <mesh model>
-    /// C: "OP", <texture>, <material>, "DiffuseColor"   ; or "NormalMap"
-    /// C: "OO", <video>, <texture>
-    /// ```
-    ///
-    /// `RelativeFilename` is relative to the FBX file and is what Blender
-    /// tries first; `FileName` is the fallback (usually absolute).
-    fn add_material(&mut self, model: i64, mesh: &Mesh, videos: &mut HashMap<String, i64>) {
-        let material = self.new_id();
-        self.objects.push(
-            Node::new("Material")
-                .prop(material)
-                .prop(object_name(&mesh.name, "Material"))
-                .prop("")
-                .value("Version", 102)
-                .value("ShadingModel", "phong")
-                .value("MultiLayer", 0)
-                .child(
-                    Properties70::new()
-                        .string("ShadingModel", "phong")
-                        .entry(
-                            "DiffuseColor",
-                            "Color",
-                            "",
-                            "A",
-                            [1.0, 1.0, 1.0].map(Property::F64),
-                        )
-                        .entry("DiffuseFactor", "Number", "", "A", [Property::F64(1.0)])
-                        .build(),
-                ),
-        );
-        self.materials += 1;
-        self.connect(material, model);
-
-        for texture in &mesh.textures {
-            let name = texture
-                .path
-                .rsplit(['/', '\\'])
-                .next()
-                .unwrap_or(&texture.path)
-                .to_owned();
-
-            let id = self.new_id();
-            self.objects.push(
-                Node::new("Texture")
-                    .prop(id)
-                    .prop(object_name(&name, "Texture"))
-                    .prop("")
-                    .value("Type", "TextureVideoClip")
-                    .value("Version", 202)
-                    .value("TextureName", object_name(&name, "Texture"))
-                    .child(
-                        Properties70::new()
-                            .string("UVSet", "UVMap")
-                            .entry("UseMaterial", "bool", "", "", [Property::I32(1)])
-                            .build(),
-                    )
-                    .value("Media", object_name(&name, "Video"))
-                    .value("FileName", texture.path.as_str())
-                    .value("RelativeFilename", texture.path.as_str())
-                    .child(Node::new("ModelUVTranslation").prop(0.0).prop(0.0))
-                    .child(Node::new("ModelUVScaling").prop(1.0).prop(1.0))
-                    .value("Texture_Alpha_Source", "None")
-                    .child(
-                        Node::new("Cropping")
-                            .prop(0i32)
-                            .prop(0i32)
-                            .prop(0i32)
-                            .prop(0i32),
-                    ),
-            );
-            self.textures += 1;
-            self.connect_prop(id, material, texture.slot.property());
-
-            let video = match videos.get(&texture.path) {
-                Some(&video) => video,
-                None => {
-                    let video = self.new_id();
-                    let mut node = Node::new("Video")
-                        .prop(video)
-                        .prop(object_name(&name, "Video"))
-                        .prop("Clip")
-                        .value("Type", "Clip")
-                        .child(
-                            Properties70::new()
-                                .entry(
-                                    "Path",
-                                    "KString",
-                                    "XRefUrl",
-                                    "",
-                                    [Property::from(texture.path.as_str())],
-                                )
-                                .build(),
-                        )
-                        .value("UseMipMap", 0)
-                        .value("Filename", texture.path.as_str())
-                        .value("RelativeFilename", texture.path.as_str());
-                    if let Some(content) = &texture.content {
-                        node.push(Node::new("Content").prop(Property::Raw(content.clone())));
-                    }
-                    self.objects.push(node);
-                    self.videos += 1;
-                    videos.insert(texture.path.clone(), video);
-                    video
-                }
-            };
-            self.connect(video, id);
-        }
     }
 
     /// `Pose` of type `BindPose`: world matrices at the time the mesh was bound.
@@ -368,135 +231,10 @@ impl SceneBuilder {
             pose.push(
                 Node::new("PoseNode")
                     .value("Node", node)
-                    .value("Matrix", Property::F64Array(matrix.to_fbx_array())),
+                    .value("Matrix", matrix.to_fbx_array()),
             );
         }
         self.objects.push(pose);
         self.poses += 1;
     }
-}
-
-/// `Geometry` of type `Mesh`: the polygon data.
-///
-/// ```text
-/// Geometry: <id>, "Geometry::<mesh>", "Mesh" {
-///     GeometryVersion: 124
-///     Vertices: *9 { a: x0,y0,z0, x1,y1,z1, x2,y2,z2 }   ; f64, mesh-local space
-///     PolygonVertexIndex: *3 { a: 0, 1, -3 }           ; see below
-///     LayerElementMaterial: 0 { ... }   ; material per polygon
-///     LayerElementNormal: 0 { ... }     ; normals
-///     LayerElementUV: 0 { ... }         ; texture coordinates
-///     Layer: 0 {                        ; which elements form layer 0
-///         Version: 100
-///         LayerElement: { Type: "LayerElementNormal"  TypedIndex: 0 }
-///         ...
-///     }
-/// }
-/// ```
-///
-/// `PolygonVertexIndex` lists the vertex indices of every polygon in order;
-/// the last index of a polygon is stored as `-(index + 1)` (bitwise NOT) to
-/// mark its end. Triangle `(0, 1, 2)` is `0, 1, -3`.
-///
-/// Every `LayerElement*` has the same shape:
-///
-/// - `MappingInformationType`: what each value belongs to
-///   - `"ByVertice"` (sic): one per vertex (`Vertices` order)
-///   - `"ByPolygonVertex"`: one per entry of `PolygonVertexIndex` (corner)
-///   - `"ByPolygon"`: one per polygon
-///   - `"AllSame"`: one value for the whole mesh
-/// - `ReferenceInformationType`:
-///   - `"Direct"`: the values are listed in mapping order
-///   - `"IndexToDirect"`: values are listed once, and an `...Index` array
-///     maps each mapping slot to a value
-fn geometry_node(id: i64, mesh: &Mesh) -> Node {
-    let vertices = mesh
-        .vertices
-        .iter()
-        .flat_map(|v| v.map(f64::from))
-        .collect();
-    // The last index of each polygon is stored as `-(index + 1)`.
-    let polygon_indices: Vec<i32> = mesh
-        .triangles
-        .iter()
-        .flat_map(|&[a, b, c]| [a as i32, b as i32, -(c as i32) - 1])
-        .collect();
-
-    let mut geometry = Node::new("Geometry")
-        .prop(id)
-        .prop(object_name(&mesh.name, "Geometry"))
-        .prop("Mesh")
-        .child(Properties70::new().build())
-        .value("GeometryVersion", 124)
-        .value("Vertices", Property::F64Array(vertices))
-        .value("PolygonVertexIndex", Property::I32Array(polygon_indices));
-
-    let mut layer = Node::new("Layer").prop(0i32).value("Version", 100);
-
-    // Every polygon uses material 0 (the first material connected to the model).
-    if !mesh.textures.is_empty() {
-        geometry.push(
-            Node::new("LayerElementMaterial")
-                .prop(0i32)
-                .value("Version", 101)
-                .value("Name", "")
-                .value("MappingInformationType", "AllSame")
-                .value("ReferenceInformationType", "IndexToDirect")
-                .value("Materials", Property::I32Array(vec![0])),
-        );
-        layer.push(layer_element("LayerElementMaterial"));
-    }
-
-    // One normal (x, y, z) per vertex, in `Vertices` order.
-    if mesh.normals.len() == mesh.vertices.len() && !mesh.normals.is_empty() {
-        geometry.push(
-            Node::new("LayerElementNormal")
-                .prop(0i32)
-                .value("Version", 101)
-                .value("Name", "")
-                .value("MappingInformationType", "ByVertice")
-                .value("ReferenceInformationType", "Direct")
-                .value(
-                    "Normals",
-                    Property::F64Array(
-                        mesh.normals.iter().flat_map(|n| n.map(f64::from)).collect(),
-                    ),
-                ),
-        );
-        layer.push(layer_element("LayerElementNormal"));
-    }
-
-    // UVs (u, v), v pointing up (0 = bottom of the image). One UV per vertex in
-    // `UV`, and `UVIndex` (one per polygon corner) points into it; the same
-    // indices as `PolygonVertexIndex` without the end markers.
-    // `Name` is the UV map name referenced by `Texture.UVSet`.
-    if mesh.uvs.len() == mesh.vertices.len() && !mesh.uvs.is_empty() {
-        let uv_index = mesh
-            .triangles
-            .iter()
-            .flat_map(|t| t.map(|i| i as i32))
-            .collect();
-        geometry.push(
-            Node::new("LayerElementUV")
-                .prop(0i32)
-                .value("Version", 101)
-                .value("Name", "UVMap")
-                .value("MappingInformationType", "ByPolygonVertex")
-                .value("ReferenceInformationType", "IndexToDirect")
-                .value(
-                    "UV",
-                    Property::F64Array(mesh.uvs.iter().flat_map(|uv| uv.map(f64::from)).collect()),
-                )
-                .value("UVIndex", Property::I32Array(uv_index)),
-        );
-        layer.push(layer_element("LayerElementUV"));
-    }
-
-    geometry.child(layer)
-}
-
-fn layer_element(element: &str) -> Node {
-    Node::new("LayerElement")
-        .value("Type", element)
-        .value("TypedIndex", 0)
 }

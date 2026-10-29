@@ -39,7 +39,8 @@ serde_hkx_features = { git = "https://github.com/SARDONYX-sard/serde-hkx.git", r
 winnow_ext = { git = "https://github.com/SARDONYX-sard/serde-hkx.git", rev = "3f53c05" }
 
 # local crates
-niflib_animation = { path = "crates/niflib_animation" }
+serde_kf = { path = "crates/serde_kf" }
+rig_math = { path = "crates/rig_math" }
 serde_bsa = { path = "crates/serde_bsa" }
 serde_fbx = { path = "crates/serde_fbx" }
 serde_nif = { path = "crates/serde_nif" }

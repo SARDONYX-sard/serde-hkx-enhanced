@@ -1,5 +1,5 @@
-use crate::spline::math::TransformMask;
-use crate::spline::math::{
+use crate::spline::track::TransformMask;
+use crate::spline::track::{
     SplineTrackQuat, SplineTrackVector, TransformSplineBlock, TransformTrack,
 };
 
@@ -39,7 +39,7 @@ fn format_track_debug(
     track: &TransformTrack,
     debug: &SerializeDebugTrack,
 ) -> String {
-    use crate::spline::math::TransformType;
+    use crate::spline::track::TransformType;
 
     let (position_kind, rotation_kind, scale_kind) = track_kind_string(track);
 

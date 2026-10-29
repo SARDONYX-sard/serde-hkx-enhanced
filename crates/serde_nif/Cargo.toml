@@ -13,6 +13,7 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+rig_math = { workspace = true }
 snafu = { workspace = true }
 
 [lints]

@@ -627,7 +627,7 @@ pub(super) fn write_animation(
         #[cfg(feature = "kf")]
         Format::Kf => {
             write_annotations(&animation, output_path)?;
-            let bytes = niflib_animation::serde_kf::to_kf(animation, skeleton)?;
+            let bytes = serde_kf::to_kf(&animation, skeleton)?;
             write_file(output_path, &bytes)?;
         }
 
@@ -646,7 +646,7 @@ pub(super) fn write_animation(
                     || "Take 001".into(),
                     |stem| stem.to_string_lossy().into_owned(),
                 ),
-                meshes: meshes.to_vec(),
+                meshes,
             };
 
             let bytes = serde_fbx::ser::to_fbx(&animation, skeleton, config)?;

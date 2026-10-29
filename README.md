@@ -52,4 +52,4 @@ Reference:
 - <https://github.com/PredatorCZ/HavokLib/blob/master/source/hka_spline_decompressor.cpp>
 
 ![cow_kf](https://github.com/user-attachments/assets/5519e2f4-170c-4489-807e-a302752180e8)
-![cow_fbx](https://github.com/user-attachments/assets/0fe57b5a-9ebc-44e1-9088-a1282a2d3e28)
+![cow_fbx](https://github.com/user-attachments/assets/8b5a961a-26ef-40cf-a68b-adec854503b7)

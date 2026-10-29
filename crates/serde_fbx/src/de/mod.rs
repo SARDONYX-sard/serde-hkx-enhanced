@@ -1,8 +1,10 @@
 //! Convert FBX animations into Havok HKX animations.
 //!
-//! The FBX file is parsed and evaluated by this crate (`parse`, `scene` modules);
+//! The FBX file is parsed and evaluated by this crate (`element`, `binary`, `ascii`, `scene` modules);
 //! no C library is involved.
-mod parse;
+mod ascii;
+mod binary;
+mod element;
 mod scene;
 
 use std::collections::HashMap;
@@ -79,7 +81,7 @@ pub fn fbx_to_animation(
     } = config;
 
     validate_fps(fps)?;
-    let nodes = parse::parse(bytes)?;
+    let nodes = element::parse(bytes)?;
     let scene = Scene::new(&nodes)?;
 
     let stack = select_animation(&scene, animation_stack.as_deref())?;
@@ -99,7 +101,7 @@ fn build_bone_mapping(scene: &Scene, skeleton: &Skeleton) -> Result<Vec<i64>, Er
     let mut models_by_name: HashMap<&str, Vec<i64>> = HashMap::new();
     for (&id, model) in &scene.models {
         models_by_name
-            .entry(model.name.as_str())
+            .entry(model.name)
             .or_default()
             .push(id);
     }
@@ -121,10 +123,10 @@ fn build_bone_mapping(scene: &Scene, skeleton: &Skeleton) -> Result<Vec<i64>, Er
         .collect()
 }
 
-fn select_animation<'a>(
-    scene: &'a Scene,
+fn select_animation<'s, 'a>(
+    scene: &'s Scene<'a>,
     requested_name: Option<&str>,
-) -> Result<&'a AnimStack, Error> {
+) -> Result<&'s AnimStack<'a>, Error> {
     #[cfg(feature = "tracing")]
     for (index, stack) in scene.stacks.iter().enumerate() {
         tracing::debug!(

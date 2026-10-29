@@ -646,7 +646,7 @@ pub(super) fn write_animation(
                     || "Take 001".into(),
                     |stem| stem.to_string_lossy().into_owned(),
                 ),
-                meshes: meshes.to_vec(),
+                meshes,
             };
 
             let bytes = serde_fbx::ser::to_fbx(&animation, skeleton, config)?;

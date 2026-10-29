@@ -4342,6 +4342,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "rig_math"
+version = "0.1.0"
+dependencies = [
+ "havok_types",
+]
+
+[[package]]
 name = "ring"
 version = "0.17.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4692,6 +4699,7 @@ dependencies = [
  "miniz_oxide",
  "quick_tracing",
  "rayon",
+ "rig_math",
  "serde",
  "serde_hkx",
  "serde_hkx_features",
@@ -4791,22 +4799,18 @@ dependencies = [
 name = "serde_spline"
 version = "0.1.0"
 dependencies = [
- "bitflags 2.13.2",
  "eframe",
  "egui",
  "havok_classes",
- "havok_serde",
  "havok_types",
  "quick_tracing",
  "rayon",
+ "rig_math",
  "serde",
  "serde_hkx",
  "serde_hkx_features",
- "snafu",
  "sonic-rs",
  "tracing",
- "winnow 1.0.4",
- "winnow_ext",
 ]
 
 [[package]]

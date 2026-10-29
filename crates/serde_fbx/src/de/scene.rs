@@ -32,46 +32,46 @@
 
 use std::collections::HashMap;
 
-use super::parse::{Element, Value};
+use std::borrow::Cow;
+
+use super::element::{Element, Value};
 use crate::Error;
-use crate::math::Mat4;
+use rig_math::Mat4;
 
 /// FBX time units per second.
 pub const KTIME_PER_SECOND: f64 = 46_186_158_000.0;
 
-/// `Properties70` as `name -> values` (the values after `type, label, flags`).
+/// `Properties70` as `name -> values` (the values after `type, label, flags`),
+/// borrowed from the parsed elements.
 #[derive(Debug, Clone, Default)]
-struct Properties(HashMap<String, Vec<Value>>);
+struct Properties<'a>(HashMap<&'a str, &'a [Value<'a>]>);
 
-impl Properties {
-    fn from_element(element: Option<&Element>) -> Self {
+impl<'a> Properties<'a> {
+    fn from_element(element: Option<&'a Element<'a>>) -> Self {
         let mut map = HashMap::new();
         if let Some(element) = element.and_then(|e| e.child("Properties70")) {
             for p in element.children_named("P") {
                 if let Some(name) = p.prop(0).and_then(Value::as_str) {
-                    map.insert(
-                        name.to_owned(),
-                        p.props.get(4..).unwrap_or_default().to_vec(),
-                    );
+                    map.insert(name, p.props.get(4..).unwrap_or_default());
                 }
             }
         }
         Self(map)
     }
 
-    fn get(&self, name: &str) -> Option<&[Value]> {
-        self.0.get(name).map(Vec::as_slice)
+    fn get(&self, name: &str) -> Option<&'a [Value<'a>]> {
+        self.0.get(name).copied()
     }
 }
 
 /// An object property with a fallback to the `Definitions` template.
-struct PropertyLookup<'a> {
-    own: &'a Properties,
-    template: &'a Properties,
+struct PropertyLookup<'p, 'a> {
+    own: &'p Properties<'a>,
+    template: &'p Properties<'a>,
 }
 
-impl PropertyLookup<'_> {
-    fn values(&self, name: &str) -> Option<&[Value]> {
+impl<'a> PropertyLookup<'_, 'a> {
+    fn values(&self, name: &str) -> Option<&'a [Value<'a>]> {
         self.own.get(name).or_else(|| self.template.get(name))
     }
 
@@ -92,11 +92,11 @@ impl PropertyLookup<'_> {
 }
 
 #[derive(Debug)]
-pub struct Model {
-    pub name: String,
-    props: Properties,
+pub struct Model<'a> {
+    pub name: &'a str,
+    props: Properties<'a>,
     /// `(property name, curve node id)`, e.g. `("Lcl Rotation", 123)`.
-    animated: Vec<(String, i64)>,
+    animated: Vec<(&'a str, i64)>,
 }
 
 #[derive(Debug, Default)]
@@ -106,13 +106,13 @@ struct CurveNode {
 }
 
 #[derive(Debug)]
-struct Curve {
-    times: Vec<i64>,
-    values: Vec<f64>,
+struct Curve<'a> {
+    times: Cow<'a, [i64]>,
+    values: Cow<'a, [f64]>,
     default: f64,
 }
 
-impl Curve {
+impl Curve<'_> {
     /// Linear (or constant) evaluation; cubic keys are treated as linear.
     ///
     /// Before the first key the first value is held, after the last key the
@@ -138,43 +138,43 @@ impl Curve {
 }
 
 #[derive(Debug)]
-pub struct AnimStack {
-    pub name: String,
+pub struct AnimStack<'a> {
+    pub name: &'a str,
     layers: Vec<i64>,
     pub local_start: Option<i64>,
     pub local_stop: Option<i64>,
 }
 
 #[derive(Debug, Default)]
-pub struct Scene {
-    pub models: HashMap<i64, Model>,
-    pub stacks: Vec<AnimStack>,
+pub struct Scene<'a> {
+    pub models: HashMap<i64, Model<'a>>,
+    pub stacks: Vec<AnimStack<'a>>,
     /// Object id of each entry in `stacks`.
     stack_ids: Vec<i64>,
-    model_template: Properties,
+    model_template: Properties<'a>,
     curve_nodes: HashMap<i64, CurveNode>,
-    curves: HashMap<i64, Curve>,
+    curves: HashMap<i64, Curve<'a>>,
     /// curve node id -> layer id
     curve_node_layer: HashMap<i64, i64>,
 }
 
 /// `"Pelvis\0\x01Model"` (binary) or `"Model::Pelvis"` (ASCII) -> `"Pelvis"`.
-fn object_name(raw: &str) -> String {
+fn object_name(raw: &str) -> &str {
     if let Some((name, _class)) = raw.split_once("\0\x01") {
-        name.to_owned()
+        name
     } else if let Some((_class, name)) = raw.split_once("::") {
-        name.to_owned()
+        name
     } else {
-        raw.to_owned()
+        raw
     }
 }
 
-impl Scene {
+impl<'a> Scene<'a> {
     /// Builds the scene from parsed top-level nodes.
     ///
     /// # Errors
     /// If `Objects` or `Connections` is missing.
-    pub fn new(nodes: &[Element]) -> Result<Self, Error> {
+    pub fn new(nodes: &'a [Element<'a>]) -> Result<Self, Error> {
         let find = |name: &str| nodes.iter().find(|node| node.name == name);
         let objects = find("Objects").ok_or_else(|| Error::LoadFbx {
             message: "no 'Objects' section".to_owned(),
@@ -198,7 +198,7 @@ impl Scene {
                 .map(object_name)
                 .unwrap_or_default();
 
-            match object.name.as_str() {
+            match object.name.as_ref() {
                 "Model" => {
                     scene.models.insert(
                         id,
@@ -238,18 +238,17 @@ impl Scene {
                 }
                 "AnimationCurve" => {
                     let array = |name: &str| object.child(name).and_then(|e| e.prop(0));
-                    let times = array("KeyTime")
-                        .and_then(Value::to_i64_vec)
-                        .unwrap_or_default();
-                    let values = array("KeyValueFloat")
-                        .and_then(Value::to_f64_vec)
-                        .unwrap_or_default();
+                    let mut times = array("KeyTime").and_then(Value::as_i64_array).unwrap_or_default();
+                    let mut values = array("KeyValueFloat").and_then(Value::as_f64_array).unwrap_or_default();
+                    // Malformed files may disagree on the key count; keep the common prefix.
                     let len = times.len().min(values.len());
+                    truncate(&mut times, len);
+                    truncate(&mut values, len);
                     scene.curves.insert(
                         id,
                         Curve {
-                            times: times[..len].to_vec(),
-                            values: values[..len].to_vec(),
+                            times,
+                            values,
                             default: array("Default").and_then(Value::as_f64).unwrap_or(0.0),
                         },
                     );
@@ -262,7 +261,7 @@ impl Scene {
         Ok(scene)
     }
 
-    fn connect(&mut self, connections: &Element) {
+    fn connect(&mut self, connections: &'a Element<'a>) {
         for c in connections.children_named("C") {
             let kind = c.prop(0).and_then(Value::as_str).unwrap_or_default();
             let (Some(child), Some(parent)) = (
@@ -289,7 +288,7 @@ impl Scene {
                 // curve node -> model property
                 ("OP", Some(property)) if self.curve_nodes.contains_key(&child) => {
                     if let Some(model) = self.models.get_mut(&parent) {
-                        model.animated.push((property.to_owned(), child));
+                        model.animated.push((property, child));
                     }
                 }
                 ("OO", _) => {
@@ -305,7 +304,7 @@ impl Scene {
     }
 
     /// Time range covered by the curves animating `models` in `stack`.
-    pub fn curve_time_range(&self, stack: &AnimStack, models: &[i64]) -> Option<(i64, i64)> {
+    pub fn curve_time_range(&self, stack: &AnimStack<'_>, models: &[i64]) -> Option<(i64, i64)> {
         let mut range: Option<(i64, i64)> = None;
         for curve in self.stack_curves(stack, models) {
             if let (Some(&first), Some(&last)) = (curve.times.first(), curve.times.last()) {
@@ -315,11 +314,11 @@ impl Scene {
         range
     }
 
-    fn stack_curves<'a>(
-        &'a self,
-        stack: &'a AnimStack,
-        models: &'a [i64],
-    ) -> impl Iterator<Item = &'a Curve> {
+    fn stack_curves<'s>(
+        &'s self,
+        stack: &'s AnimStack<'_>,
+        models: &'s [i64],
+    ) -> impl Iterator<Item = &'s Curve<'a>> {
         models
             .iter()
             .filter_map(|id| self.models.get(id))
@@ -330,14 +329,14 @@ impl Scene {
             .filter_map(|curve| self.curves.get(curve))
     }
 
-    fn in_stack(&self, stack: &AnimStack, curve_node: i64) -> bool {
+    fn in_stack(&self, stack: &AnimStack<'_>, curve_node: i64) -> bool {
         self.curve_node_layer
             .get(&curve_node)
             .is_none_or(|layer| stack.layers.contains(layer))
     }
 
     /// Local transform of `model` at `time` (KTime) in `stack`.
-    pub fn local_transform(&self, model_id: i64, stack: Option<&AnimStack>, time: i64) -> Mat4 {
+    pub fn local_transform(&self, model_id: i64, stack: Option<&AnimStack<'_>>, time: i64) -> Mat4 {
         let Some(model) = self.models.get(&model_id) else {
             return Mat4::IDENTITY;
         };
@@ -355,7 +354,7 @@ impl Scene {
                 if !self.in_stack(stack, *node_id) {
                     continue;
                 }
-                let target = match property.as_str() {
+                let target = match *property {
                     "Lcl Translation" => &mut translation,
                     "Lcl Rotation" => &mut rotation,
                     "Lcl Scaling" => &mut scaling,
@@ -399,7 +398,7 @@ impl Scene {
 }
 
 /// `Definitions > ObjectType "Model" > PropertyTemplate > Properties70`.
-fn model_template(definitions: Option<&Element>) -> Properties {
+fn model_template<'a>(definitions: Option<&'a Element<'a>>) -> Properties<'a> {
     definitions
         .into_iter()
         .flat_map(|d| d.children_named("ObjectType"))
@@ -407,4 +406,12 @@ fn model_template(definitions: Option<&Element>) -> Properties {
         .and_then(|t| t.child("PropertyTemplate"))
         .map(|t| Properties::from_element(Some(t)))
         .unwrap_or_default()
+}
+
+/// Shortens a borrowed or owned slice without copying the borrowed case.
+fn truncate<T: Clone>(slice: &mut Cow<'_, [T]>, len: usize) {
+    match slice {
+        Cow::Borrowed(s) => *s = &s[..len.min(s.len())],
+        Cow::Owned(v) => v.truncate(len),
+    }
 }

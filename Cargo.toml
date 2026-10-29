@@ -40,6 +40,7 @@ winnow_ext = { git = "https://github.com/SARDONYX-sard/serde-hkx.git", rev = "3f
 
 # local crates
 niflib_animation = { path = "crates/niflib_animation" }
+rig_math = { path = "crates/rig_math" }
 serde_bsa = { path = "crates/serde_bsa" }
 serde_fbx = { path = "crates/serde_fbx" }
 serde_nif = { path = "crates/serde_nif" }

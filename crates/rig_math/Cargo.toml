@@ -1,0 +1,19 @@
+[package]
+name = "rig_math"
+version = "0.1.0"
+description = "SIMD vectors, quaternions and matrices shared by the Havok, FBX and NIF crates."
+
+authors.workspace = true
+categories = ["mathematics"]
+edition.workspace = true
+keywords = ["skyrim", "simd"]
+license.workspace = true
+readme = "../../README.md"
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+havok_types = { workspace = true } # `Vector4` / `Quaternion` / `QsTransform` conversions
+
+[lints]
+workspace = true

@@ -13,11 +13,11 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-rayon = { workspace = true }                    # Parallel
+rayon = { workspace = true } # Parallel
 serde = { workspace = true }
-snafu = { workspace = true }                    # Define all error patterns(with backtrace)
+snafu = { workspace = true } # Define all error patterns(with backtrace)
 tracing = { workspace = true, optional = true }
-miniz_oxide = "0.8.9"                            # zlib-compressed FBX arrays
+miniz_oxide = "0.8.9" # zlib-compressed FBX arrays
 
 # serde-hkx
 havok_classes = { workspace = true, features = ["ignore_duplicates"] }
@@ -27,6 +27,7 @@ serde_hkx = { workspace = true }
 serde_hkx_features = { workspace = true }
 
 # workspace members
+rig_math = { workspace = true }
 serde_nif = { workspace = true }
 serde_spline = { workspace = true }
 

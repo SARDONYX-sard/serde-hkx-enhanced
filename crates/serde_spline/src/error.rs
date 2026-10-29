@@ -298,8 +298,8 @@ impl From<serde_hkx_features::error::Error> for Error {
 pub struct ReadContext {
     pub block_index: Option<usize>,
     pub track_index: Option<usize>,
-    pub track_type: Option<crate::spline::math::SplineTrackType>,
-    pub quantization: Option<crate::spline::math::QuantizationType>,
+    pub track_type: Option<crate::spline::track::SplineTrackType>,
+    pub quantization: Option<crate::spline::track::QuantizationType>,
 }
 
 impl core::fmt::Display for ReadContext {

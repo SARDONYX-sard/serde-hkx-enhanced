@@ -20,7 +20,7 @@ use serde_hkx_features::{ClassMap, Format, convert::serialize_class_map};
 use super::{Animation, AnimationAnnotation, Skeleton};
 use crate::{
     error::Error,
-    spline::{SplineDecompressor, math::TransformMask},
+    spline::{SplineDecompressor, track::TransformMask},
 };
 
 /// Encodes a sampled FBX animation into a spline-compressed Havok animation.

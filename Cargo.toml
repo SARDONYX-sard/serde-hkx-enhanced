@@ -1,22 +1,22 @@
 [workspace.package]
+version = "0.3.0"
 authors = ["SARDONYX"]
-categories = ["encoding"]
-description = "Enhanced Havok Behavior (De)Serialization Library(ver. hk_2010.2.0-r1)"
 edition = "2024"
-keywords = ["serde", "havok"]
+rust-version = "1.95"
+description = "Enhanced Havok Behavior (De)Serialization Library(ver. hk_2010.2.0-r1)"
+readme = "README.md"
+repository = "https://github.com/SARDONYX-sard/serde-hkx-enhanced" # NOTE: Without it, CLI & CI build will error.
 # NOTE: HavokLib (spline decoder) is GPL-3.0-or-later, and PyNifly does not specify a GPL
 # version (GPLv3 section 14: any version may be chosen). serde_nif follows nifly, whose sources
 # say "See the included GPLv3 LICENSE file" without "or later", so it overrides this with GPL-3.0-only.
 license = "GPL-3.0-or-later"
-readme = "README.md"
-repository = "https://github.com/SARDONYX-sard/serde-hkx-enhanced" # NOTE: Without it, CLI & CI build will error.
-rust-version = "1.95"
-version = "0.2.0"
+keywords = ["serde", "havok"]
+categories = ["encoding"]
 
 [workspace]
+resolver = "3"
 members = ["crates/*"]
 default-members = ["crates/cli"]
-resolver = "3"
 
 [workspace.dependencies]
 bitflags = "2.13.2" # To generate flags type
@@ -52,11 +52,11 @@ quick_tracing = { version = "0.1.5", features = ["derive"] } # Easy logging
 # Use release mode during development to prevent `serde-hkx` stack overflow
 # - ref: https://doc.rust-lang.org/cargo/reference/profiles.html#release
 [profile.release-lto]
-codegen-units = 1
 inherits = "release"
+strip = true
 lto = true
 panic = "abort"
-strip = true
+codegen-units = 1
 
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }

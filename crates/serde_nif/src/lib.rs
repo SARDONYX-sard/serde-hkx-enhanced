@@ -1,10 +1,68 @@
+// SPDX-License-Identifier: GPL-3.0-only
+//
+// Reference (block layouts and skinning, nifly is the library behind PyNifly):
+// - https://github.com/ousnius/nifly/blob/6cb15fb5da71527b33cea8ff7913be8790e1c633/src/Geometry.cpp
+// - https://github.com/ousnius/nifly/blob/6cb15fb5da71527b33cea8ff7913be8790e1c633/src/Skin.cpp
+// - https://github.com/ousnius/nifly/blob/6cb15fb5da71527b33cea8ff7913be8790e1c633/src/Objects.cpp
+// - https://github.com/ousnius/nifly/blob/6cb15fb5da71527b33cea8ff7913be8790e1c633/src/Nodes.cpp
+// - https://github.com/ousnius/nifly/blob/6cb15fb5da71527b33cea8ff7913be8790e1c633/src/NifFile.cpp
+// - https://github.com/ousnius/nifly/blob/6cb15fb5da71527b33cea8ff7913be8790e1c633/include/VertexData.hpp
+// - https://github.com/BadDogSkyrim/PyNifly/blob/ac3c1453a5efa44f580033205ecaf5be9a005eed/io_scene_nifly/blender_defs.py
+
 //! Read Skyrim LE/SE NIF scenes: node hierarchy, triangle shapes and skinning.
 //!
 //! Only the blocks needed to rebuild a skinned mesh are decoded; every other
 //! block is skipped using the block sizes stored in the header (20.2.0.5+).
 //!
-//! Block layouts follow nifly (<https://github.com/ousnius/nifly>), the
-//! library behind PyNifly.
+//! Block layouts follow nifly, the library behind PyNifly (see the references above).
+//!
+//! # NIF primer
+//!
+//! A NIF (NetImmerse/Gamebryo) file is a header followed by a flat list of
+//! "blocks" (objects). Blocks refer to each other by **index** into that list.
+//!
+//! ```text
+//! "Gamebryo File Format, Version 20.2.0.7\n"   header line
+//! u32 version          0x14020007 (= 20.2.0.7, Skyrim LE and SE)
+//! u8  endian           1 = little endian
+//! u32 user version     12 (Skyrim)
+//! u32 block count
+//! u32 BS version       83 = Skyrim LE, 100 = Skyrim SE (Fallout 4: 130, ...)
+//! short strings        author / process script / export script (u8 length incl. NUL)
+//! u16 type count, then each type name   e.g. ["NiNode", "BSTriShape", "NiSkinInstance", ...]
+//! u16 type index per block              block i is of type names[index[i]]
+//! u32 size per block                    lets a reader skip blocks it does not know
+//! u32 string count, u32 max length, then each string   e.g. ["Pelvis", "LFemur", ...]
+//! u32 group count, groups (unused)
+//! blocks...                             block 0, block 1, ...
+//! u32 root count, root block indices    footer: entry points of the scene graph
+//! ```
+//!
+//! Inside blocks:
+//!
+//! - a **ref** is an `i32` block index (`-1` = none);
+//! - a **string** is an `i32` index into the header string table (`-1` = none);
+//! - a transform is translation (3 `f32`), rotation (3x3 `f32`, row-major),
+//!   uniform scale (`f32`).
+//!
+//! A skinned Skyrim mesh (blocks and the refs between them):
+//!
+//! ```text
+//! BSFadeNode "HighlandCow.nif"               root node (NiNode subclass)
+//! ├─ children → NiNode "Pelvis"              bones are plain nodes; their transforms
+//! │             └─ NiNode "LFemur" ...       are the bind pose of the skeleton
+//! └─ children → BSTriShape "highlandcow"     the mesh (SE; LE: NiTriShape + NiTriShapeData)
+//!                ├─ skin   → NiSkinInstance          bones: refs to the bone NiNodes
+//!                │           ├─ data      → NiSkinData       skin-to-bone transform per bone (+ weights on LE)
+//!                │           └─ partition → NiSkinPartition  SE: vertex buffer with weights, triangles
+//!                ├─ shader → BSLightingShaderProperty
+//!                │           └─ texture set → BSShaderTextureSet  ["textures\\...\\a.dds", "..._n.dds", ...]
+//!                └─ alpha  → NiAlphaProperty (not read)
+//! ```
+//!
+//! Class inheritance decides the field order of a block:
+//! `NiObjectNET` (name, extra data, controller) → `NiAVObject` (flags,
+//! transform, collision) → `NiNode` (children) / `BSTriShape` (shape data).
 //!
 //! # Skinning
 //!
@@ -52,11 +110,23 @@ pub struct Node {
     pub transform: Transform,
 }
 
+/// Skinning of a shape.
+///
+/// Vertices are stored in "skin space" (usually the shape's own space). At
+/// runtime a vertex is moved by each influencing bone:
+///
+/// ```text
+/// v' = Σ weight_b * bone_world_b * skin_to_bone_b * v
+/// ```
+///
+/// At bind time `bone_world_b * skin_to_bone_b` is the skin-to-world matrix,
+/// so the bone's bind pose in skin space is `inverse(skin_to_bone_b)`.
 #[derive(Debug, Clone, Default)]
 pub struct Skin {
     /// Bone node names, indexed by the bone indices in `weights`.
     pub bones: Vec<String>,
-    /// `NiSkinData` overall transform (global -> skin space).
+    /// `NiSkinData` overall transform (global -> skin space). Usually the
+    /// inverse of the shape's world transform (identity for most meshes).
     pub global_to_skin: Transform,
     /// Per bone: skin space -> bone space at bind time.
     pub skin_to_bone: Vec<Transform>,
@@ -76,7 +146,18 @@ pub struct Shape {
     pub uvs: Vec<[f32; 2]>,
     pub triangles: Vec<[u16; 3]>,
     pub skin: Option<Skin>,
-    /// `BSShaderTextureSet` slots (`[0]` diffuse, `[1]` normal, ...); empty strings for unused slots.
+    /// `BSShaderTextureSet` slots; empty strings for unused slots. Skyrim:
+    ///
+    /// | slot | texture | example |
+    /// |---|---|---|
+    /// | 0 | diffuse (color, alpha = transparency) | `bear.dds` |
+    /// | 1 | normal map (alpha = specular) | `bear_n.dds`, `malebody_1_msn.dds` |
+    /// | 2 | glow / skin tint / subsurface | `bear_sk.dds` |
+    /// | 3 | height (parallax) | |
+    /// | 4 | environment cube map | `cubemaps\shinybright_e.dds` |
+    /// | 5 | environment mask | `bear_m.dds` |
+    /// | 6 | multilayer inner layer | |
+    /// | 7 | back light / specular (SE) | |
     pub textures: Vec<String>,
 }
 
@@ -181,11 +262,18 @@ pub fn from_bytes(bytes: &[u8]) -> Result<Scene, Error> {
 // ---------------------------------------------------------------------------
 // Header
 
+/// The parts of the file header needed to read blocks (layout in the crate docs).
 struct Header {
+    /// 12 for Skyrim.
     user_version: u32,
+    /// Bethesda stream version: 83 = Skyrim LE, 100 = Skyrim SE. Several block
+    /// layouts depend on it (e.g. SE packs vertices into `BSTriShape`).
     bs_version: u32,
+    /// Type name of every block, e.g. `["BSFadeNode", "NiNode", "BSTriShape", ...]`.
     block_types: Vec<String>,
+    /// Byte size of every block.
     block_sizes: Vec<u32>,
+    /// String table; blocks store `i32` indices into it (names of nodes, ...).
     strings: Vec<String>,
 }
 
@@ -381,8 +469,13 @@ const NODE_TYPES: &[&str] = &[
     "NiBone",
 ];
 
+/// Decodes the blocks this crate needs; any other type becomes [`Block::Other`].
 fn read_block(r: &mut Reader<'_>, block_type: &str, header: &Header) -> Result<Block, Error> {
     Ok(match block_type {
+        // NiNode:
+        //   NiAVObject fields (see `read_av_object`)
+        //   u32 child count, i32 refs   children (nodes and shapes)
+        //   u32 effect count, i32 refs  lights etc. (Skyrim: always 0, not read)
         t if NODE_TYPES.contains(&t) => {
             let (name, transform) = read_av_object(r)?;
             let children = r.index_list()?;
@@ -394,6 +487,14 @@ fn read_block(r: &mut Reader<'_>, block_type: &str, header: &Header) -> Result<B
         }
         "BSTriShape" | "BSMeshLODTriShape" | "BSSubIndexTriShape" => read_bs_tri_shape(r, header, false)?,
         "BSDynamicTriShape" => read_bs_tri_shape(r, header, true)?,
+        // NiTriShape / NiTriStrips (LE mesh), NiGeometry fields after NiAVObject:
+        //   i32 ref   data           NiTriShapeData / NiTriStripsData (vertices, triangles)
+        //   i32 ref   skin instance  NiSkinInstance / BSDismemberSkinInstance, -1 if rigid
+        //   u32 material count, then count x (i32 name string) + count x (i32 extra data)
+        //   i32       active material
+        //   u8        "default material needs update" flag
+        //   i32 ref   shader property  BSLightingShaderProperty
+        //   i32 ref   alpha property   NiAlphaProperty
         "NiTriShape" | "NiTriStrips" => {
             let (name, transform) = read_av_object(r)?;
             let data = r.index()?;
@@ -413,6 +514,11 @@ fn read_block(r: &mut Reader<'_>, block_type: &str, header: &Header) -> Result<B
             }
         }
         "NiTriShapeData" | "NiTriStripsData" => read_geometry_data(r, block_type == "NiTriStripsData")?,
+        // NiSkinInstance (BSDismemberSkinInstance adds body part partitions after it):
+        //   i32 ref   skin data       NiSkinData
+        //   i32 ref   skin partition  NiSkinPartition
+        //   i32 ref   skeleton root   NiNode the bones belong to
+        //   u32 bone count, i32 refs  bone NiNodes; vertex bone index i = bones[i]
         "NiSkinInstance" | "BSDismemberSkinInstance" => Block::SkinInstance {
             data: r.index()?,
             partition: r.index()?,
@@ -423,6 +529,13 @@ fn read_block(r: &mut Reader<'_>, block_type: &str, header: &Header) -> Result<B
         },
         "NiSkinData" => read_skin_data(r)?,
         "NiSkinPartition" => read_skin_partition(r, header)?,
+        // BSLightingShaderProperty (Skyrim material):
+        //   u32       shader type (0 = default, 1 = environment map, 5 = skin tint, ...)
+        //   NiObjectNET fields
+        //   u32 x2    shader flags 1 / 2 (bit sets: skinned, specular, ...)
+        //   f32 x2    UV offset   f32 x2  UV scale
+        //   i32 ref   texture set  BSShaderTextureSet
+        //   ... colors, glossiness, alpha etc. (not read)
         "BSLightingShaderProperty" => {
             r.u32()?; // shader type
             read_object_net(r)?;
@@ -431,6 +544,9 @@ fn read_block(r: &mut Reader<'_>, block_type: &str, header: &Header) -> Result<B
                 texture_set: r.index()?,
             }
         }
+        // BSShaderTextureSet:
+        //   u32 count (Skyrim: 9), then count x (u32 length + bytes) texture paths
+        //   relative to Data, e.g. "textures\actors\cow\highlandcow.dds" (see `Shape::textures`)
         "BSShaderTextureSet" => {
             let count = r.u32()? as usize;
             r.check_len(count, 4)?;
@@ -442,7 +558,13 @@ fn read_block(r: &mut Reader<'_>, block_type: &str, header: &Header) -> Result<B
     })
 }
 
-/// `NiObjectNET`: name, extra data, controller.
+/// `NiObjectNET`: the base of every named block.
+///
+/// ```text
+/// i32 string  name                 e.g. "Pelvis", "highlandcow"
+/// u32 count, i32 refs  extra data  NiStringExtraData, BSXFlags, ...
+/// i32 ref     controller           animation controller (-1 for static)
+/// ```
 fn read_object_net(r: &mut Reader<'_>) -> Result<Option<usize>, Error> {
     let name = r.index()?;
     r.index_list()?; // extra data
@@ -450,6 +572,7 @@ fn read_object_net(r: &mut Reader<'_>) -> Result<Option<usize>, Error> {
     Ok(name)
 }
 
+/// `f32 x3` translation, `f32 x9` rotation (row-major 3x3), `f32` scale.
 fn read_transform_trs(r: &mut Reader<'_>) -> Result<Transform, Error> {
     Ok(Transform {
         translation: r.vec3()?,
@@ -469,7 +592,16 @@ fn read_transform_rts(r: &mut Reader<'_>) -> Result<Transform, Error> {
     })
 }
 
-/// `NiObjectNET` + `NiAVObject` (Skyrim: no property list).
+/// `NiObjectNET` + `NiAVObject`: every object placed in the scene graph.
+///
+/// ```text
+/// NiObjectNET fields
+/// u32       flags          visibility, culling, ... (e.g. 14 = 0b1110)
+/// transform                local, relative to the parent node (`read_transform_trs`)
+/// i32 ref   collision      bhkCollisionObject (-1 if none)
+/// ```
+///
+/// Older games also store a property list here; Skyrim (BS version > 34) does not.
 fn read_av_object(r: &mut Reader<'_>) -> Result<(Option<usize>, Transform), Error> {
     let name = read_object_net(r)?;
     r.u32()?; // flags
@@ -478,6 +610,21 @@ fn read_av_object(r: &mut Reader<'_>) -> Result<(Option<usize>, Transform), Erro
     Ok((name, transform))
 }
 
+/// Decodes `BSVertexDesc`, the 64-bit description of a packed SE vertex.
+///
+/// ```text
+/// bits  0..4    vertex size / 4         (e.g. 7 -> 28 bytes, 11 -> 44 bytes)
+/// bits  8..16   position section size / 4 (4 -> 16 bytes = f32 x3 + bitangent x)
+/// bits 16..44   offsets of the other attributes (not needed when reading in order)
+/// bits 44..56   attribute flags:
+///   bit 0 VF_VERTEX  position          bit 5 VF_COLORS   vertex colors
+///   bit 1 VF_UV      texture coords    bit 6 VF_SKINNED  bone weights + indices
+///   bit 3 VF_NORMAL  normal            bit 8 VF_EYEDATA  eye scale
+///   bit 4 VF_TANGENT tangent           bit 10 VF_FULLPREC f32 positions
+/// ```
+///
+/// Example: `0x0007b0008765040b` -> flags `0x07b` (position, UV, normal,
+/// tangent, colors, skinned), vertex size 44 bytes.
 const fn vertex_layout(desc: u64) -> VertexLayout {
     let flags = (desc >> 44) as u16;
     VertexLayout {
@@ -490,11 +637,22 @@ const fn vertex_layout(desc: u64) -> VertexLayout {
     }
 }
 
+/// Packed normal/tangent component: `0..=255` -> `-1.0..=1.0`.
 fn byte_to_unit(b: u8) -> f32 {
     (f32::from(b) / 255.0).mul_add(2.0, -1.0)
 }
 
-/// One packed vertex (`BSVertexData`).
+/// One packed vertex (`BSVertexData`). Present parts, in this order:
+///
+/// ```text
+/// position   f32 x3 + f32 bitangent.x   (or f16 x3 + f16 bitangent.x)
+/// uv         f16 x2                     u, v (v = 0 at the top of the image)
+/// normal     u8 x3 + u8 bitangent.y     packed, see `byte_to_unit`
+/// tangent    u8 x3 + u8 bitangent.z
+/// color      u8 x4                      RGBA
+/// skinning   f16 x4 weights + u8 x4 bone indices (indices into NiSkinInstance bones)
+/// eye data   f32
+/// ```
 ///
 /// `force_full_precision`: positions are `f32` regardless of the description
 /// (SE `BSTriShape`). Otherwise the size of the position section decides:
@@ -563,11 +721,34 @@ fn read_vertices(
         .collect()
 }
 
+/// `u16 x3` vertex indices per triangle.
 fn read_triangles(r: &mut Reader<'_>, count: usize) -> Result<Vec<[u16; 3]>, Error> {
     r.check_len(count, 6)?;
     (0..count).map(|_| Ok([r.u16()?, r.u16()?, r.u16()?])).collect()
 }
 
+/// `BSTriShape` (SE mesh). Unlike `NiTriShape`, the geometry is inside the block.
+///
+/// ```text
+/// NiObjectNET fields
+/// u32       flags
+/// transform
+/// i32 ref   collision
+/// f32 x4    bounding sphere (center, radius)
+/// i32 ref   skin instance     NiSkinInstance, -1 if rigid
+/// i32 ref   shader property   BSLightingShaderProperty
+/// i32 ref   alpha property
+/// u64       vertex desc       see `vertex_layout`
+/// u16       triangle count    (u32 for BS version >= 130)
+/// u16       vertex count
+/// u32       data size         vertex size * vertex count + 6 * triangle count; 0 when skinned (SE)
+/// vertices                    `read_vertex` x vertex count   (if data size > 0)
+/// triangles                   u16 x3 x triangle count       (if data size > 0)
+/// u32       particle data size, then half-float positions/normals + triangles if > 0
+/// ```
+///
+/// `BSDynamicTriShape` (facegen heads) appends `u32 size` and `f32 x4` per
+/// vertex: the real positions (the packed ones are zero).
 fn read_bs_tri_shape(r: &mut Reader<'_>, header: &Header, dynamic: bool) -> Result<Block, Error> {
     let name = read_object_net(r)?;
     r.u32()?; // flags
@@ -633,6 +814,29 @@ fn read_bs_tri_shape(r: &mut Reader<'_>, header: &Header, dynamic: bool) -> Resu
     })
 }
 
+/// `NiTriShapeData` / `NiTriStripsData` (LE geometry).
+///
+/// ```text
+/// i32       group id
+/// u16       vertex count
+/// u8 x2     keep / compress flags
+/// u8        has vertices,  then f32 x3 x vertex count
+/// u16       data flags     bit 0: has UVs, bits 12..16: tangent space data present
+/// u32       material CRC
+/// u8        has normals,   then f32 x3 x vertex count
+///                          (+ tangents and bitangents, f32 x3 x vertex count each, if flags bits 12..)
+/// f32 x4    bounding sphere
+/// u8        has colors,    then f32 x4 x vertex count
+/// f32 x2 x vertex count    UVs, if data flags bit 0 (v = 0 at the top of the image)
+/// u16       consistency flags
+/// i32 ref   additional data
+/// u16       triangle count
+/// NiTriShapeData:  u32 point count (3 x triangles), u8 has triangles, u16 x3 x triangle count,
+///                  u16 match group count + groups (shared vertices, not read)
+/// NiTriStripsData: u16 strip count, u16 length per strip, u8 has points, u16 x length per strip
+/// ```
+///
+/// A strip `a b c d e` is the triangles `abc`, `cbd` (flipped), `cde`, ...
 fn read_geometry_data(r: &mut Reader<'_>, strips: bool) -> Result<Block, Error> {
     r.i32()?; // group id
     let num_vertices = r.u16()? as usize;
@@ -701,6 +905,20 @@ fn read_geometry_data(r: &mut Reader<'_>, strips: bool) -> Result<Block, Error> 
     })
 }
 
+/// `NiSkinData`: bind transforms (and LE weights).
+///
+/// Transforms here are stored rotation first (`read_transform_rts`).
+///
+/// ```text
+/// transform  global -> skin                  (see `Skin::global_to_skin`)
+/// u32        bone count                      same order as NiSkinInstance bones
+/// u8         has vertex weights              1 on LE; SE meshes may keep them in the partition only
+/// per bone:
+///   transform  skin -> bone at bind time     (see `Skin::skin_to_bone`)
+///   f32 x4     bounding sphere of the bone's vertices
+///   u16        weighted vertex count
+///   (u16 vertex index, f32 weight) x count   if has vertex weights
+/// ```
 fn read_skin_data(r: &mut Reader<'_>) -> Result<Block, Error> {
     let global_to_skin = read_transform_rts(r)?;
     let num_bones = r.u32()? as usize;
@@ -731,6 +949,30 @@ fn read_skin_data(r: &mut Reader<'_>) -> Result<Block, Error> {
     })
 }
 
+/// `NiSkinPartition`: the mesh split into GPU-friendly pieces, each using a
+/// limited set of bones.
+///
+/// ```text
+/// u32 partition count
+/// SE only (BS version 100):
+///   u32 data size, u32 vertex size, u64 vertex desc
+///   vertices: `read_vertex` x (data size / vertex size)   the whole mesh, global indices
+/// per partition:
+///   u16 vertex count, u16 triangle count, u16 bone count, u16 strip count,
+///   u16 weights per vertex (usually 4)
+///   u16 x bone count            bones used: partition-local bone i = skin instance bone bones[i]
+///   u8 has vertex map,          u16 x vertex count: partition vertex -> mesh vertex
+///   u8 has vertex weights,      f32 x weights per vertex x vertex count
+///   u16 x strip count           strip lengths
+///   u8 has faces,               strips (u16 x lengths) or triangles (u16 x3, partition-local)
+///   u8 has bone indices,        u8 x weights per vertex x vertex count (partition-local bones)
+///   u8 LOD level, u8 global vertex buffer flag
+///   SE only: u64 vertex desc, u16 x3 x triangle count "true triangles" (global vertex indices)
+/// ```
+///
+/// On SE the skinned `BSTriShape` has no data of its own: its vertices
+/// (with weights) and triangles are the global vertex buffer and the
+/// partitions' true triangles.
 fn read_skin_partition(r: &mut Reader<'_>, header: &Header) -> Result<Block, Error> {
     let num_partitions = r.u32()? as usize;
     let is_se = header.bs_version == 100;

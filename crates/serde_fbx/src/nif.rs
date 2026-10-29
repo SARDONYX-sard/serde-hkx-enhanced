@@ -1,3 +1,9 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+//
+// Reference (shape placement and bind pose):
+// - https://github.com/BadDogSkyrim/PyNifly/blob/ac3c1453a5efa44f580033205ecaf5be9a005eed/io_scene_nifly/nif/import_nif.py
+// - https://github.com/BadDogSkyrim/PyNifly/blob/ac3c1453a5efa44f580033205ecaf5be9a005eed/io_scene_nifly/blender_defs.py
+
 //! NIF shapes as FBX meshes.
 //!
 //! Follows PyNifly's import: a shape is placed at its node's world transform,

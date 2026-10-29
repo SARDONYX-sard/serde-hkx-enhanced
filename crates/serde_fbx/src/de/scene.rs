@@ -1,10 +1,34 @@
 //! FBX scene graph: models, animation stacks and curve evaluation.
 //!
-//! Local node transform (FBX SDK convention):
+//! What is read (see [`crate::ser`] for the meaning of each object):
+//!
+//! | node | used for |
+//! |---|---|
+//! | `Objects > Model` | bones by name (`"Pelvis\0\x01Model"` / `"Model::Pelvis"`) and their `Properties70` |
+//! | `Objects > AnimationStack` | clips (`LocalStart` / `LocalStop`) |
+//! | `Objects > AnimationCurveNode` | `d|X` / `d|Y` / `d|Z` defaults |
+//! | `Objects > AnimationCurve` | `KeyTime` (i64 KTime) / `KeyValueFloat` |
+//! | `Connections` | layer -> stack, curve node -> layer, curve node -> bone property, curve -> channel |
+//! | `Definitions > ObjectType "Model" > PropertyTemplate` | default `Properties70` values of every Model |
+//!
+//! A property missing from a Model's `Properties70` takes the template value;
+//! missing from both, the FBX default (zero offsets, unit scale).
+//!
+//! Local node transform (FBX SDK convention), each term a 4x4 matrix from a
+//! Model property:
 //!
 //! ```text
 //! T * Roff * Rp * Rpre * R * Rpost^-1 * Rp^-1 * Soff * Sp * S * Sp^-1
+//!
+//! T     Lcl Translation        Rpre   PreRotation  (XYZ Euler degrees)
+//! Roff  RotationOffset         R      Lcl Rotation (Euler degrees, order = RotationOrder)
+//! Rp    RotationPivot          Rpost  PostRotation (XYZ Euler degrees)
+//! Soff  ScalingOffset          S      Lcl Scaling
+//! Sp    ScalingPivot
 //! ```
+//!
+//! Files from Blender or this crate only use `T`, `R` and `S`; Maya/3ds Max
+//! files commonly use pre-rotation and pivots.
 
 use std::collections::HashMap;
 
@@ -85,6 +109,10 @@ struct Curve {
 
 impl Curve {
     /// Linear (or constant) evaluation; cubic keys are treated as linear.
+    ///
+    /// Before the first key the first value is held, after the last key the
+    /// last value (FBX "constant" extrapolation). Sampling at the key times
+    /// (as Havok exports and Blender bakes per frame) is exact either way.
     fn evaluate(&self, time: i64) -> f64 {
         let (Some(&first), Some(&last)) = (self.times.first(), self.times.last()) else {
             return self.default;

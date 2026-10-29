@@ -1,12 +1,28 @@
 //! Skinned meshes in the exported FBX scene.
 //!
+//! Objects of one skinned, textured mesh and their connections
+//! (`A <- B` = `C: "OO", B, A`, i.e. B is connected to A):
+//!
 //! ```text
-//! Model(Mesh) <- Geometry(Mesh) <- Deformer(Skin) <- SubDeformer(Cluster) <- Model(LimbNode)
+//! scene root (0)
+//! └─ Model "Model::<mesh>", "Mesh"            placement of the mesh (Lcl T/R/S = world transform)
+//!    ├─ Geometry "Geometry::<mesh>", "Mesh"   vertices, triangles, normals, UVs
+//!    │  └─ Deformer "Deformer::<mesh>", "Skin"            one per skinned geometry
+//!    │     └─ Deformer "SubDeformer::<bone>", "Cluster"   one per influencing bone:
+//!    │        │                                           vertex indices + weights
+//!    │        └─ Model "<bone>", "LimbNode"               (C: "OO", bone, cluster)
+//!    └─ Material "Material::<mesh>"
+//!       └─ Texture "Texture::<file>"  (C: "OP", texture, material, "DiffuseColor" | "NormalMap")
+//!          └─ Video "Video::<file>", "Clip"   the image file (path, optional embedded bytes)
+//! Pose "Pose::BindPose", "BindPose"           world matrix of the mesh and every bone at bind time
 //! ```
 //!
 //! A cluster stores, as Blender's exporter does:
 //! - `TransformLink`: bone world matrix at bind time;
 //! - `Transform`: `inverse(TransformLink) * mesh world matrix`.
+//!
+//! Matrices are written as 16 `f64` in column-major order (translation in
+//! elements 12..15), see [`Mat4::to_fbx_array`].
 
 use std::collections::HashMap;
 
@@ -90,6 +106,8 @@ impl SceneBuilder {
         let mut videos: HashMap<String, i64> = HashMap::new();
 
         for mesh in meshes {
+            // Mesh model: like a bone's Model but with subclass "Mesh"; its
+            // Lcl T/R/S place the geometry in the scene.
             let model = self.new_id();
             let geometry = self.new_id();
 
@@ -121,6 +139,11 @@ impl SceneBuilder {
                 continue;
             }
 
+            // Skin deformer: container of the clusters of one geometry.
+            //   Deformer: <id>, "Deformer::<mesh>", "Skin" {
+            //       Version: 101
+            //       Link_DeformAcuracy: 50     ; FBX SDK default (sic, "Acuracy"), unused by importers
+            //   }
             let skin = self.new_id();
             self.objects.push(
                 Node::new("Deformer")
@@ -139,6 +162,16 @@ impl SceneBuilder {
                     continue;
                 };
 
+                // Cluster: the vertices one bone moves.
+                //   Deformer: <id>, "SubDeformer::<bone>", "Cluster" {
+                //       Version: 100
+                //       UserData: "", ""
+                //       Indexes: *N { a: 0, 5, 6, ... }        ; vertex indices into Geometry.Vertices
+                //       Weights: *N { a: 1, 0.5, 0.25, ... }   ; weight per index (0..=1)
+                //       Transform: *16 { ... }                 ; inverse(TransformLink) * mesh world
+                //       TransformLink: *16 { ... }             ; bone world matrix at bind time
+                //   }
+                // A vertex's weights over all clusters should sum to 1.
                 let id = self.new_id();
                 let transform = cluster.bind.inverse() * mesh.transform;
                 self.objects.push(
@@ -167,6 +200,38 @@ impl SceneBuilder {
     }
 
     /// `Material <- Texture <- Video`, connected to `model`.
+    ///
+    /// ```text
+    /// Material: <id>, "Material::<mesh>", "" {
+    ///     Version: 102
+    ///     ShadingModel: "phong"                ; "lambert" or "phong"
+    ///     Properties70: {
+    ///         P: "DiffuseColor", "Color", "", "A", 1, 1, 1    ; multiplied with the diffuse texture
+    ///         P: "DiffuseFactor", "Number", "", "A", 1
+    ///     }
+    /// }
+    /// Texture: <id>, "Texture::highlandcow.dds", "" {
+    ///     Type: "TextureVideoClip"   Version: 202
+    ///     TextureName: "Texture::highlandcow.dds"
+    ///     Properties70: { P: "UVSet", "KString", "", "", "UVMap" }  ; LayerElementUV name to use
+    ///     Media: "Video::highlandcow.dds"      ; name of the Video object
+    ///     FileName / RelativeFilename: "textures/actors/cow/highlandcow.dds"
+    ///     ModelUVTranslation: 0, 0   ModelUVScaling: 1, 1   ; UV offset / tiling
+    ///     Texture_Alpha_Source: "None"   Cropping: 0, 0, 0, 0
+    /// }
+    /// Video: <id>, "Video::highlandcow.dds", "Clip" {
+    ///     Type: "Clip"
+    ///     Properties70: { P: "Path", "KString", "XRefUrl", "", "<path>" }
+    ///     Filename / RelativeFilename: "<path>"
+    ///     Content: <raw file bytes>            ; optional embedded image
+    /// }
+    /// C: "OO", <material>, <mesh model>
+    /// C: "OP", <texture>, <material>, "DiffuseColor"   ; or "NormalMap"
+    /// C: "OO", <video>, <texture>
+    /// ```
+    ///
+    /// `RelativeFilename` is relative to the FBX file and is what Blender
+    /// tries first; `FileName` is the fallback (usually absolute).
     fn add_material(&mut self, model: i64, mesh: &Mesh, videos: &mut HashMap<String, i64>) {
         let material = self.new_id();
         self.objects.push(
@@ -252,6 +317,20 @@ impl SceneBuilder {
         }
     }
 
+    /// `Pose` of type `BindPose`: world matrices at the time the mesh was bound.
+    ///
+    /// ```text
+    /// Pose: <id>, "Pose::BindPose", "BindPose" {
+    ///     Type: "BindPose"   Version: 100
+    ///     NbPoseNodes: 45                       ; number of PoseNode children
+    ///     PoseNode: { Node: <model id>  Matrix: *16 { ... } }   ; world matrix, column-major
+    ///     ...
+    /// }
+    /// ```
+    ///
+    /// Importers use it as the rest pose of bones (Blender builds the armature
+    /// from it). Bones with a cluster use the cluster's `TransformLink`, the
+    /// others the Havok reference pose.
     fn add_bind_pose(&mut self, matrices: &HashMap<i64, Mat4>) {
         let id = self.new_id();
         let mut entries: Vec<_> = matrices.iter().collect();
@@ -276,6 +355,39 @@ impl SceneBuilder {
     }
 }
 
+/// `Geometry` of type `Mesh`: the polygon data.
+///
+/// ```text
+/// Geometry: <id>, "Geometry::<mesh>", "Mesh" {
+///     GeometryVersion: 124
+///     Vertices: *9 { a: x0,y0,z0, x1,y1,z1, x2,y2,z2 }   ; f64, mesh-local space
+///     PolygonVertexIndex: *3 { a: 0, 1, -3 }           ; see below
+///     LayerElementMaterial: 0 { ... }   ; material per polygon
+///     LayerElementNormal: 0 { ... }     ; normals
+///     LayerElementUV: 0 { ... }         ; texture coordinates
+///     Layer: 0 {                        ; which elements form layer 0
+///         Version: 100
+///         LayerElement: { Type: "LayerElementNormal"  TypedIndex: 0 }
+///         ...
+///     }
+/// }
+/// ```
+///
+/// `PolygonVertexIndex` lists the vertex indices of every polygon in order;
+/// the last index of a polygon is stored as `-(index + 1)` (bitwise NOT) to
+/// mark its end. Triangle `(0, 1, 2)` is `0, 1, -3`.
+///
+/// Every `LayerElement*` has the same shape:
+///
+/// - `MappingInformationType`: what each value belongs to
+///   - `"ByVertice"` (sic): one per vertex (`Vertices` order)
+///   - `"ByPolygonVertex"`: one per entry of `PolygonVertexIndex` (corner)
+///   - `"ByPolygon"`: one per polygon
+///   - `"AllSame"`: one value for the whole mesh
+/// - `ReferenceInformationType`:
+///   - `"Direct"`: the values are listed in mapping order
+///   - `"IndexToDirect"`: values are listed once, and an `...Index` array
+///     maps each mapping slot to a value
 fn geometry_node(id: i64, mesh: &Mesh) -> Node {
     let vertices = mesh
         .vertices
@@ -300,6 +412,7 @@ fn geometry_node(id: i64, mesh: &Mesh) -> Node {
 
     let mut layer = Node::new("Layer").prop(0i32).value("Version", 100);
 
+    // Every polygon uses material 0 (the first material connected to the model).
     if !mesh.textures.is_empty() {
         geometry.push(
             Node::new("LayerElementMaterial")
@@ -313,6 +426,7 @@ fn geometry_node(id: i64, mesh: &Mesh) -> Node {
         layer.push(layer_element("LayerElementMaterial"));
     }
 
+    // One normal (x, y, z) per vertex, in `Vertices` order.
     if mesh.normals.len() == mesh.vertices.len() && !mesh.normals.is_empty() {
         geometry.push(
             Node::new("LayerElementNormal")
@@ -329,6 +443,10 @@ fn geometry_node(id: i64, mesh: &Mesh) -> Node {
         layer.push(layer_element("LayerElementNormal"));
     }
 
+    // UVs (u, v), v pointing up (0 = bottom of the image). One UV per vertex in
+    // `UV`, and `UVIndex` (one per polygon corner) points into it; the same
+    // indices as `PolygonVertexIndex` without the end markers.
+    // `Name` is the UV map name referenced by `Texture.UVSet`.
     if mesh.uvs.len() == mesh.vertices.len() && !mesh.uvs.is_empty() {
         let uv_index = mesh
             .triangles

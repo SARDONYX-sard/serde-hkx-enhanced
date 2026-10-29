@@ -12,6 +12,75 @@
 //! Importers interpolate between keys themselves, and the FBX rotation curve
 //! is Euler. If keys fall between frames (e.g. 30fps keys in a 24fps scene),
 //! the displayed pose is an Euler blend, not the Havok pose.
+//!
+//! # FBX primer
+//!
+//! An FBX file is a tree of nodes `Name: prop, prop, ... { children }`
+//! (see the `node` module for the binary encoding). A scene is described by four parts:
+//!
+//! - `GlobalSettings`: axes, unit and frame rate of the whole file;
+//! - `Objects`: every object (bone, mesh, animation curve, ...). Each object
+//!   node is `Type: <i64 id>, "<name>\0\x01<class>", "<subclass>" { ... }`;
+//! - `Connections`: how objects are linked, by id. There is no nesting in
+//!   `Objects`; the hierarchy and every reference live here:
+//!   - `C: "OO", child, parent`: object to object (child bone -> parent
+//!     bone, mesh geometry -> mesh model, layer -> stack, ...). Parent `0` is
+//!     the scene root.
+//!   - `C: "OP", child, parent, "property"`: object to a property of
+//!     another object (animation curve node -> `"Lcl Rotation"` of a bone,
+//!     texture -> `"DiffuseColor"` of a material, ...).
+//! - `Definitions`: object counts per type (and optional property templates
+//!   holding default values).
+//!
+//! Object properties live in `Properties70`, one `P` per property:
+//!
+//! ```text
+//! P: "<name>", "<type>", "<label>", "<flags>", <value>...
+//! P: "Lcl Translation", "Lcl Translation", "", "A", 1.0, 2.0, 3.0
+//! ```
+//!
+//! `flags` contains `A` when the property is animatable.
+//!
+//! # What this module writes (ASCII form, 1 bone, ids shortened)
+//!
+//! ```text
+//! FBXHeaderExtension: { FBXHeaderVersion: 1003  FBXVersion: 7400 ... }
+//! GlobalSettings: {
+//!     Properties70: {
+//!         P: "UpAxis", "int", "Integer", "", 2          ; Z up
+//!         P: "FrontAxis", "int", "Integer", "", 1       ; Y ...
+//!         P: "FrontAxisSign", "int", "Integer", "", -1  ; ... negative: -Y front
+//!         P: "UnitScaleFactor", "double", "Number", "", 10   ; 1 unit = 10 cm
+//!         P: "TimeMode", "enum", "", "", 6              ; 6 = 30 fps
+//!         P: "CustomFrameRate", "double", "Number", "", 30
+//!     }
+//! }
+//! Objects: {
+//!     NodeAttribute: 2, "NodeAttribute::Pelvis", "LimbNode" { TypeFlags: "Skeleton" }
+//!     Model: 1, "Model::Pelvis", "LimbNode" {
+//!         Properties70: {
+//!             P: "Lcl Translation", "Lcl Translation", "", "A", 0, -49.4, 90.8   ; parent space
+//!             P: "Lcl Rotation", "Lcl Rotation", "", "A", -90, 2.1, 90           ; XYZ Euler, degrees
+//!             P: "Lcl Scaling", "Lcl Scaling", "", "A", 1, 1, 1
+//!         }
+//!     }
+//!     AnimationStack: 10, "AnimStack::getup", "" { LocalStart/LocalStop in KTime }
+//!     AnimationLayer: 11, "AnimLayer::BaseLayer", ""
+//!     AnimationCurveNode: 12, "AnimCurveNode::R", "" { P: "d|X" ... "d|Y" ... "d|Z" (defaults) }
+//!     AnimationCurve: 13, "AnimCurve::", "" { KeyTime: *46 {...}  KeyValueFloat: *46 {...} }
+//! }
+//! Connections: {
+//!     C: "OO", 1, 0                    ; bone Pelvis -> scene root
+//!     C: "OO", 2, 1                    ; node attribute -> bone
+//!     C: "OO", 11, 10                  ; layer -> stack
+//!     C: "OO", 12, 11                  ; curve node -> layer
+//!     C: "OP", 12, 1, "Lcl Rotation"   ; curve node animates the bone's rotation
+//!     C: "OP", 13, 12, "d|X"           ; curve = X channel of the curve node
+//! }
+//! Takes: { Current: "getup"  Take: "getup" { LocalTime: 0, <stop> } }
+//! ```
+//!
+//! Meshes, skinning, materials and textures are added by the `mesh` module.
 mod mesh;
 mod node;
 
@@ -25,7 +94,10 @@ use self::node::{Node, Properties70, Property, object_name};
 use crate::error::Error;
 use crate::math::Mat4;
 
-/// FBX time units per second.
+/// FBX time units ("KTime") per second.
+///
+/// Every time value in FBX (`KeyTime`, `LocalStart`, `TimeSpanStop`, ...) is an
+/// `i64` in these units: 1 frame at 30 fps = `46_186_158_000 / 30` = `1_539_538_600`.
 const KTIME_PER_SECOND: f64 = 46_186_158_000.0;
 
 /// Configuration for exporting a Havok animation as FBX.
@@ -110,8 +182,11 @@ pub fn to_fbx(
 
     let stop = scene.add_animation(&models, animation, anim_fps, &take_name);
 
+    // Top-level nodes, in the order the FBX SDK writes them.
     let nodes = [
         header_extension(),
+        // `FileId` (16 raw bytes) and `CreationTime` identify the file for the
+        // FBX SDK; importers do not interpret them.
         Node::new("FileId").prop(Property::Raw(FILE_ID.to_vec())),
         Node::new("CreationTime").prop("1970-01-01 10:00:00:000"),
         Node::new("Creator").prop(CREATOR),
@@ -173,6 +248,7 @@ impl Default for SceneBuilder {
 }
 
 impl SceneBuilder {
+    /// Object ids are arbitrary unique `i64`s; `0` is reserved for the scene root.
     const fn new_id(&mut self) -> i64 {
         self.next_id += 1;
         self.next_id
@@ -196,6 +272,25 @@ impl SceneBuilder {
     }
 
     /// Creates one `LimbNode` model per bone and returns their ids.
+    ///
+    /// A bone is two objects:
+    ///
+    /// ```text
+    /// NodeAttribute: <attr id>, "NodeAttribute::<bone>", "LimbNode" {
+    ///     Properties70: { P: "Size", "double", "Number", "", 1 }   ; display size only
+    ///     TypeFlags: "Skeleton"
+    /// }
+    /// Model: <id>, "Model::<bone>", "LimbNode" {                  ; "LimbNode" = bone
+    ///     Version: 232                                           ; Model node format version
+    ///     Properties70: { Lcl Translation / Lcl Rotation / Lcl Scaling = reference pose }
+    ///     Shading: T  Culling: "CullingOff"                       ; viewport flags, unused by Blender
+    /// }
+    /// C: "OO", <attr id>, <id>          ; attribute belongs to the model
+    /// C: "OO", <id>, <parent id or 0>   ; bone hierarchy
+    /// ```
+    ///
+    /// The `Lcl` values are the Havok reference pose, i.e. the transform
+    /// relative to the parent bone.
     fn add_skeleton(&mut self, skeleton: &Skeleton) -> Result<Vec<i64>, Error> {
         let mut models = Vec::with_capacity(skeleton.bones.len());
 
@@ -220,7 +315,7 @@ impl SceneBuilder {
                     .prop("LimbNode")
                     .value("Version", 232)
                     .child(model_properties(t, r, s).build())
-                    .value("MultiLayer", 0)
+                    .value("MultiLayer", 0) // legacy (FBX 6) take flags, always 0
                     .value("MultiTake", 0)
                     .value("Shading", Property::Bool(true))
                     .value("Culling", "CullingOff"),
@@ -249,6 +344,21 @@ impl SceneBuilder {
     }
 
     /// Creates one animation stack keyed at every Havok frame.
+    ///
+    /// Animation objects and how they connect:
+    ///
+    /// ```text
+    /// AnimationStack "AnimStack::<take>"      one clip (Blender: one action)
+    ///   LocalStart / LocalStop / ReferenceStart / ReferenceStop: KTime range
+    /// └─ AnimationLayer "AnimLayer::BaseLayer"  (C: "OO", layer, stack)
+    ///    └─ AnimationCurveNode "T" / "R" / "S"   (C: "OO", node, layer)
+    ///         animates a bone property         (C: "OP", node, bone, "Lcl Translation" | "Lcl Rotation" | "Lcl Scaling")
+    ///         P: "d|X" / "d|Y" / "d|Z" = value used when a channel has no curve
+    ///       └─ AnimationCurve per channel        (C: "OP", curve, node, "d|X" | "d|Y" | "d|Z")
+    /// ```
+    ///
+    /// Units of the curve values: translation in file units (Havok units
+    /// here), rotation in XYZ Euler degrees, scale as a factor.
     ///
     /// Returns the stop time in KTime.
     fn add_animation(
@@ -345,6 +455,19 @@ impl SceneBuilder {
         stop
     }
 
+    /// `Definitions`: number of objects per type.
+    ///
+    /// ```text
+    /// Definitions: {
+    ///     Version: 100
+    ///     Count: <total>
+    ///     ObjectType: "Model" { Count: 44 }
+    ///     ...
+    /// }
+    /// ```
+    ///
+    /// An `ObjectType` may also hold a `PropertyTemplate` with default property
+    /// values; none is written here, so every object lists its properties.
     fn definitions(&self) -> Node {
         let types = [
             ("GlobalSettings", 1),
@@ -378,6 +501,27 @@ impl SceneBuilder {
 }
 
 /// Linear `AnimationCurve`.
+///
+/// ```text
+/// AnimationCurve: <id>, "AnimCurve::", "" {
+///     Default: 0                       ; value before the first key (unused when keys exist)
+///     KeyVer: 4009                     ; key format version
+///     KeyTime: *46 { a: 0, 1539538600, 3079077200, ... }   ; i64 KTime per key
+///     KeyValueFloat: *46 { a: ... }    ; f32 value per key
+///     KeyAttrFlags: *1 { a: 4 }        ; interpolation of each attribute group
+///     KeyAttrDataFloat: *4 { a: 0, 0, <bits 218434821>, 0 }  ; tangent data (unused for linear)
+///     KeyAttrRefCount: *1 { a: 46 }    ; number of keys using each attribute
+/// }
+/// ```
+///
+/// Keys are grouped into "attributes": `KeyAttrRefCount[i]` consecutive keys
+/// use `KeyAttrFlags[i]` and `KeyAttrDataFloat[4*i..4*i+4]`. One attribute
+/// covering every key is enough here.
+///
+/// `KeyAttrFlags` bits: `0x2` constant, `0x4` linear, `0x8` cubic; cubic keys
+/// add tangent mode bits. `KeyAttrDataFloat` holds right/left slope and weights
+/// for cubic keys; for linear keys the FBX SDK (and Blender) write
+/// `0, 0, 218434821 (as f32 bits), 0`.
 fn anim_curve(id: i64, default: f64, times: Vec<i64>, values: Vec<f32>) -> Node {
     /// `eInterpolationLinear`
     const INTERPOLATION_LINEAR: i32 = 1 << 2;
@@ -403,6 +547,12 @@ fn anim_curve(id: i64, default: f64, times: Vec<i64>, values: Vec<f32>) -> Node 
         .value("KeyAttrRefCount", Property::I32Array(vec![count]))
 }
 
+/// `FBXHeaderExtension`: file format information.
+///
+/// - `FBXHeaderVersion`: version of this header block (1003 since FBX 2006);
+/// - `FBXVersion`: same as the version in the binary header (7400 = FBX 2014/2015);
+/// - `EncryptionType`: 0 = not encrypted;
+/// - `Creator`: free text, the program that wrote the file.
 fn header_extension() -> Node {
     Node::new("FBXHeaderExtension")
         .value("FBXHeaderVersion", 1003)
@@ -412,6 +562,26 @@ fn header_extension() -> Node {
 }
 
 /// Same orientation and unit as nif_tool: Z up, -Y front, 1 Havok unit = 10cm.
+///
+/// Axes (`*Axis`: 0 = X, 1 = Y, 2 = Z; `*AxisSign`: 1 or -1):
+/// - `UpAxis` 2 / sign 1: +Z is up (Skyrim);
+/// - `FrontAxis` 1 / sign -1: the model faces -Y;
+/// - `CoordAxis` 0 / sign 1: +X is right (right-handed system).
+///
+/// Importers convert these axes to their own (Blender: Z up, -Y front, so no
+/// conversion happens). `Original*` record the axes/unit of the authoring tool.
+///
+/// Unit: `UnitScaleFactor` = centimeters per file unit. 10 means 1 Havok unit
+/// = 10 cm; Blender (meters) then imports 1 unit as 0.1 m.
+///
+/// Time:
+/// - `TimeMode`: frame rate preset, see [`time_mode`];
+/// - `TimeProtocol`: 2 = display as frames (0 = SMPTE timecode, 1 = frame count);
+/// - `TimeSpanStart` / `TimeSpanStop`: scene time range in KTime;
+/// - `CustomFrameRate`: frame rate when `TimeMode` is 14 (custom).
+///
+/// `AmbientColor`, `DefaultCamera`, `SnapOnFrameMode`, `CurrentTimeMarker`
+/// are defaults written by every exporter; importers ignore them.
 fn global_settings(fps: f64, stop: i64) -> Node {
     Node::new("GlobalSettings").value("Version", 1000).child(
         Properties70::new()
@@ -438,6 +608,15 @@ fn global_settings(fps: f64, stop: i64) -> Node {
     )
 }
 
+/// `Takes`: legacy list of animation clips (pre-7.0 files). Modern importers
+/// use `AnimationStack`; it is written for compatibility with the FBX SDK.
+///
+/// ```text
+/// Takes: {
+///     Current: "getup"
+///     Take: "getup" { FileName: "getup.tak"  LocalTime: 0, <stop>  ReferenceTime: 0, <stop> }
+/// }
+/// ```
 fn takes(take_name: &str, stop: i64) -> Node {
     Node::new("Takes").value("Current", take_name).child(
         Node::new("Take")
@@ -449,6 +628,18 @@ fn takes(take_name: &str, stop: i64) -> Node {
 }
 
 /// FBX `TimeMode` for a frame rate.
+///
+/// | value | frame rate | value | frame rate |
+/// |---|---|---|---|
+/// | 0 | default (30) | 10 | 25 (PAL) |
+/// | 1 | 120 | 11 | 24 (cinema) |
+/// | 2 | 100 | 12 | 1000 |
+/// | 3 | 60 | 13 | 23.976 |
+/// | 4 | 50 | 14 | custom: `CustomFrameRate` |
+/// | 5 | 48 | 15 | 96 |
+/// | 6 | 30 | 16 | 72 |
+/// | 7 | 30 (drop frame) | 17 | 59.94 |
+/// | 8, 9 | 29.97 (NTSC) | 18 | 119.88 |
 ///
 /// Importers such as Blender only read `CustomFrameRate` when the mode is
 /// `eCustom` (14).
@@ -524,6 +715,22 @@ fn transform_to_trs(transform: &QsTransform, prev_euler: Option<[f64; 3]>) -> [[
 }
 
 /// `Properties70` of a `Model` with the given local transform.
+///
+/// - `RotationOrder` (enum): order of `Lcl Rotation` Euler angles.
+///   0 = XYZ (X applied first: `R = Rz * Ry * Rx`), 1 = XZY, 2 = YZX, 3 = YXZ,
+///   4 = ZXY, 5 = ZYX, 6 = spheric XYZ.
+/// - `InheritType` (enum): how the parent's scale applies to children.
+///   0 = RrSs, 1 = RSrs (parent scale affects child translation, the usual
+///   behavior, written by Blender), 2 = Rrs (no parent scale).
+/// - `DefaultAttributeIndex`: which connected `NodeAttribute` is the main
+///   one (0 = first).
+/// - `Lcl Translation` / `Lcl Rotation` / `Lcl Scaling`: local transform
+///   relative to the parent (translation in file units, rotation in degrees).
+///
+/// The full local transform an importer computes is
+/// `T * Roff * Rp * Rpre * R * Rpost^-1 * Rp^-1 * Soff * Sp * S * Sp^-1`;
+/// the pivot/offset/pre/post properties are left at their identity defaults,
+/// so it reduces to `T * R * S`, which is exactly Havok's `QsTransform`.
 fn model_properties(t: [f64; 3], r: [f64; 3], s: [f64; 3]) -> Properties70 {
     Properties70::new()
         .enumeration("RotationOrder", 0) // eEulerXYZ

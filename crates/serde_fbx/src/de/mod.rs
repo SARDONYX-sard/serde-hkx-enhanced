@@ -1,6 +1,6 @@
 //! Convert FBX animations into Havok HKX animations.
 //!
-//! The FBX file is parsed and evaluated by this crate ([`parse`], [`scene`]);
+//! The FBX file is parsed and evaluated by this crate (`parse`, `scene` modules);
 //! no C library is involved.
 mod parse;
 mod scene;

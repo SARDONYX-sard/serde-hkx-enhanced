@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: (C) 2016-2023 Lukas Cone
-// SPDX-License-Identifier: GPL-3.0
+// SPDX-License-Identifier: GPL-3.0-or-later
 //
 // ref: https://github.com/PredatorCZ/HavokLib/blob/master/source/hka_spline_decompressor.cpp
 // ref: https://github.com/lennart99v/SageHavokEditor/blob/988ee1c25e3fe8f35b8ac43d4494331156b16147/SkyrimHavokEditor/Core/Animation/HavokSplineDecoder.cs

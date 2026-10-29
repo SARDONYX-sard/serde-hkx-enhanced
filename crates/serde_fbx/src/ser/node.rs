@@ -5,16 +5,46 @@
 //! encodings of that tree, so the scene is built once as [`Node`]s and then
 //! written in either format.
 //!
-//! Binary layout (version < 7500, 32-bit offsets):
+//! Binary layout (version < 7500, 32-bit offsets; 7500+ uses u64 for the
+//! three node header fields and a 25-byte null record):
 //!
 //! ```text
-//! header : "Kaydara FBX Binary  \0\x1a\0" + u32 version
-//! node   : u32 end_offset | u32 num_props | u32 props_len | u8 name_len | name
-//!          | props... | children... | [13 zero bytes if it has children]
-//! root   : node... | 13 zero bytes | footer
+//! header : "Kaydara FBX Binary  \0\x1a\0" (23 bytes) + u32 version (7400)
+//! node   : u32 end_offset   absolute file offset just past this node
+//!          u32 num_props    number of properties
+//!          u32 props_len    byte length of the property list
+//!          u8  name_len     then `name_len` bytes of name (no NUL)
+//!          props...         `num_props` typed values (below)
+//!          children...      nested nodes
+//!          [null record]    13 zero bytes, present when the node has children
+//!                           (the FBX SDK also writes it for nodes without properties)
+//! root   : node... | null record | footer
 //! ```
 //!
-//! ref: https://code.blender.org/2013/08/fbx-binary-file-format-specification/
+//! Property encoding: a one-byte type code, then the value (little endian).
+//!
+//! | code | type | payload |
+//! |---|---|---|
+//! | `C` | bool | 1 byte (0 / 1) |
+//! | `Y` | i16 | 2 bytes |
+//! | `I` | i32 | 4 bytes |
+//! | `L` | i64 | 8 bytes (object ids, KTime) |
+//! | `F` | f32 | 4 bytes |
+//! | `D` | f64 | 8 bytes |
+//! | `S` | string | u32 length + bytes (not NUL-terminated) |
+//! | `R` | raw bytes | u32 length + bytes (embedded files) |
+//! | `b` `i` `l` `f` `d` | arrays of bool / i32 / i64 / f32 / f64 | u32 count, u32 encoding (0 = raw, 1 = zlib), u32 byte length, data |
+//!
+//! In ASCII files the same tree is written as text:
+//!
+//! ```text
+//! Name: 1, "text", 2.5 {          ; properties separated by commas
+//!     Child: "x"
+//!     Array: *3 { a: 1,2,3 }      ; arrays: *<count> { a: values }
+//! }
+//! ```
+//!
+//! ref: <https://code.blender.org/2013/08/fbx-binary-file-format-specification/>
 
 use std::fmt::Write as _;
 
@@ -26,7 +56,9 @@ pub const FBX_VERSION: u32 = 7400;
 
 /// Separator between an object name and its class in binary files.
 ///
-/// Binary: `"Pelvis\0\x01Model"`, ASCII: `"Model::Pelvis"`.
+/// Binary: `"Pelvis\0\x01Model"`, ASCII: `"Model::Pelvis"`. The class is the
+/// FBX SDK class (`Model`, `Geometry`, `NodeAttribute`, `AnimCurve`, ...);
+/// the name may be empty (`"\0\x01AnimCurve"`).
 const NAME_CLASS_SEPARATOR: &str = "\0\x01";
 
 /// A typed FBX property value.
@@ -139,7 +171,20 @@ pub fn object_name(name: &str, class: &str) -> String {
 
 /// `Properties70` builder.
 ///
-/// Each entry is `P: name, type, label, flags, values...`.
+/// Each entry is `P: name, type, label, flags, values...`:
+///
+/// | method | type, label | values |
+/// |---|---|---|
+/// | [`int`](Self::int) | `"int", "Integer"` | `I` |
+/// | [`enumeration`](Self::enumeration) | `"enum", ""` | `I` (meaning depends on the property) |
+/// | [`double`](Self::double) | `"double", "Number"` | `D` |
+/// | [`ktime`](Self::ktime) | `"KTime", "Time"` | `L` (KTime units) |
+/// | [`string`](Self::string) | `"KString", ""` | `S` |
+/// | [`color`](Self::color) | `"ColorRGB", "Color"` | `D D D` (0..=1) |
+/// | [`number`](Self::number) | `"Number", ""` + flag `A` | `D` (animatable) |
+/// | [`lcl`](Self::lcl) | `"Lcl Translation"` etc. + flag `A` | `D D D` |
+///
+/// `flags`: `A` = animatable, `U` = user defined, `H` = hidden; usually empty.
 #[derive(Debug, Default)]
 pub struct Properties70(Node);
 

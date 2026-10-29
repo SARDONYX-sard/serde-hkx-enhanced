@@ -1,5 +1,7 @@
 //! Shared types and helpers used by rig import and export.
+pub mod actor;
 pub mod export;
+pub mod export_all;
 pub mod import;
 
 use std::{
@@ -43,6 +45,22 @@ fn create_parent(path: &Path) -> Result<(), Error> {
     }
 
     Ok(())
+}
+
+/// Writes a file through a temporary file and a rename, so that threads
+/// writing the same file concurrently never leave a partial file behind.
+fn write_file_atomic(path: &Path, bytes: &[u8]) -> Result<(), Error> {
+    create_parent(path)?;
+
+    let mut temp = path.as_os_str().to_owned();
+    temp.push(format!(".{:?}.tmp", std::thread::current().id()).replace(['(', ')'], ""));
+    let temp = PathBuf::from(temp);
+
+    std::fs::write(&temp, bytes).map_err(|source| Error::IoError { source })?;
+    std::fs::rename(&temp, path).map_err(|source| {
+        let _ = std::fs::remove_file(&temp);
+        Error::IoError { source }
+    })
 }
 
 /// Writes converted animation bytes to the specified output path.

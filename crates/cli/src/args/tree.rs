@@ -2,8 +2,7 @@
 use std::path::PathBuf;
 
 /// ANSI color representation command examples.
-pub const EXAMPLES: &str = color_print::cstr!(
-    r#"<blue><bold><underline>Examples</underline></bold></blue>
+pub const EXAMPLES: &str = r#"<blue><bold><underline>Examples</underline></bold></blue>
 - <blue!>xml -> dependencies tree -> stdout</blue!>
   <cyan!>hkxc tree</cyan!> ./defaultmale.xml
 
@@ -12,11 +11,10 @@ pub const EXAMPLES: &str = color_print::cstr!(
 
 - <blue!>hkx -> dependencies tree -> a file</blue!>
   <cyan!>hkxc tree</cyan!> ./defaultmale.hkx <cyan!>-o</cyan!> tree.txt
-"#
-);
+"#;
 
 #[derive(Debug, clap::Args)]
-#[clap(arg_required_else_help = true, after_long_help = EXAMPLES)]
+#[clap(arg_required_else_help = true, after_long_help = crate::ui::paint(EXAMPLES))]
 pub(crate) struct Args {
     /// hkx/xml file path
     pub input: PathBuf,

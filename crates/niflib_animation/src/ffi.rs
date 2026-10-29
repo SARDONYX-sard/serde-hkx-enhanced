@@ -1,4 +1,8 @@
-#[allow(clippy::module_inception, clippy::missing_errors_doc)]
+#[allow(
+    clippy::module_inception,
+    clippy::missing_errors_doc,
+    clippy::clone_on_copy, // `derive(Clone)` expanded by `cxx::bridge`
+)]
 #[cxx::bridge(namespace = "niflib_animation")]
 mod ffi {
     #[derive(Clone, Debug)]

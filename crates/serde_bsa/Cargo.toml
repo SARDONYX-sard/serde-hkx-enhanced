@@ -1,0 +1,21 @@
+[package]
+name = "serde_bsa"
+version = "0.1.0"
+description = "Read Skyrim LE/SE BSA archives without C/C++ libraries."
+
+authors.workspace = true
+categories = ["parser-implementations"]
+edition.workspace = true
+keywords = ["skyrim", "bsa"]
+license.workspace = true
+readme = "../../README.md"
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+lz4_flex = "0.14.0"     # SE (v105) file compression
+miniz_oxide = "0.8.9"   # LE (v104) file compression
+snafu = { workspace = true }
+
+[lints]
+workspace = true

@@ -1,5 +1,6 @@
 pub mod args;
 mod logger;
+mod ui;
 
 use crate::args::Args;
 use clap::Parser;
@@ -25,8 +26,7 @@ async fn main() {
         }
         Err(err) => {
             tracing::error!("{err}");
-            let err = color_print::cformat!("<red>[Error]\n{err}</red>");
-            eprintln!("{err}");
+            eprintln!("{}", ui::error(&err.to_string()));
             exit(1);
         }
     }

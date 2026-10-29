@@ -2,8 +2,7 @@
 use std::path::PathBuf;
 
 /// ANSI color representation command examples.
-pub const EXAMPLES: &str = color_print::cstr!(
-    r#"<blue><bold><underline>Examples</underline></bold></blue>
+pub const EXAMPLES: &str = r#"<blue><bold><underline>Examples</underline></bold></blue>
 - <blue!>hkx -> hexdump -> stdout</blue!>
   <cyan!>hkxc dump</cyan!> ./defaultmale.hkx
 
@@ -12,11 +11,10 @@ pub const EXAMPLES: &str = color_print::cstr!(
 
  - <blue!>hexdump -> hkx -> a file</blue!><yellow>(NOTE: For reverse conversion, use `-o` to specify the output path.)</yellow>
   <cyan!>hkxc dump</cyan!> hexdump.txt <cyan!>-o</cyan!> ./defaultmale.hkx -r
-"#
-);
+"#;
 
 #[derive(Debug, clap::Args)]
-#[clap(arg_required_else_help = true, after_long_help = EXAMPLES)]
+#[clap(arg_required_else_help = true, after_long_help = crate::ui::paint(EXAMPLES))]
 pub(crate) struct Args {
     /// hkx file path/hexdump file path(When use `--reverse`)
     pub input: PathBuf,

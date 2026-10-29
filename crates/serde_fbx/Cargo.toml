@@ -17,7 +17,7 @@ rayon = { workspace = true }                    # Parallel
 serde = { workspace = true }
 snafu = { workspace = true }                    # Define all error patterns(with backtrace)
 tracing = { workspace = true, optional = true }
-ufbx = "0.11.3"
+miniz_oxide = "0.8.9"                            # zlib-compressed FBX arrays
 
 # serde-hkx
 havok_classes = { workspace = true, features = ["ignore_duplicates"] }
@@ -27,8 +27,8 @@ serde_hkx = { workspace = true }
 serde_hkx_features = { workspace = true }
 
 # workspace members
-serde_spline = { path = "../serde_spline" }
-ufbx_write = { path = "../ufbx_write" }
+serde_nif = { workspace = true }
+serde_spline = { workspace = true }
 
 [dev-dependencies]
 quick_tracing = { workspace = true }

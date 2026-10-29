@@ -1,4 +1,4 @@
-use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
+use indicatif::{MultiProgress, ProgressBar, ProgressDrawTarget, ProgressStyle};
 use serde_hkx_features::progress::ProgressHandler;
 use std::path::Path;
 use std::sync::Arc;
@@ -17,7 +17,11 @@ pub struct CliProgressHandler {
 impl CliProgressHandler {
     /// Create a new `CliProgressHandler`.
     pub fn new() -> Self {
-        let multi_progress = MultiProgress::new();
+        let multi_progress = if crate::ui::quiet() {
+            MultiProgress::with_draw_target(ProgressDrawTarget::hidden())
+        } else {
+            MultiProgress::new()
+        };
         let progress_bar = multi_progress.add(ProgressBar::no_length());
         let success_bar = multi_progress.add(ProgressBar::no_length());
         let failure_bar = multi_progress.add(ProgressBar::no_length());
@@ -63,8 +67,8 @@ impl CliProgressHandler {
 
 impl ProgressHandler for CliProgressHandler {
     fn on_empty(&self) {
-        println!(
-            "No files found in the directory to process. Please check if the directory contains valid files."
+        crate::ui::info(
+            "No files found in the directory to process. Please check if the directory contains valid files.",
         );
     }
 
@@ -82,6 +86,7 @@ impl ProgressHandler for CliProgressHandler {
             move || loop {
                 success_bar.set_position(success_count.load(Ordering::Acquire));
                 failure_bar.set_position(failure_count.load(Ordering::Acquire));
+                std::thread::sleep(std::time::Duration::from_millis(50));
             }
         });
     }

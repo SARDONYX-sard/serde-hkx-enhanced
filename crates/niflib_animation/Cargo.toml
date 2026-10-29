@@ -40,7 +40,7 @@ winnow_ext = { workspace = true }
 
 
 # workspace members
-serde_spline = { path = "../serde_spline" }
+serde_spline = { workspace = true }
 
 [dev-dependencies]
 quick_tracing = { workspace = true }

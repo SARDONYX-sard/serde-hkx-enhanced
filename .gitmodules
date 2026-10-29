@@ -1,3 +1,0 @@
-[submodule "crates/ufbx_write/ffi"]
-	path = crates/ufbx_write/ffi
-	url = https://github.com/ufbx/ufbx-write.git

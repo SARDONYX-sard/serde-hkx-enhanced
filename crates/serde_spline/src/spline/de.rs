@@ -438,7 +438,7 @@ fn read32_quat(reader: &mut Reader<'_>) -> Result<QuatA16, Error> {
 
     // Recover the packed radial component.
     let mut r = ((c_val >> 18) & R_MASK) as f32 * R_FRAC;
-    r = 1.0 - r * r;
+    r = r.mul_add(-r, 1.0);
 
     // The lower 18 bits contain the packed angular coordinates.
     let phi_theta = (c_val & 0x3ffff) as f32;
@@ -448,12 +448,12 @@ fn read32_quat(reader: &mut Reader<'_>) -> Result<QuatA16, Error> {
     let mut theta = 0.0;
 
     if phi > 0.0 {
-        theta = PI_4 * (phi_theta - phi * phi) / phi;
+        theta = PI_4 * phi.mul_add(-phi, phi_theta) / phi;
         phi *= PHI_FRAC;
     }
 
     // Reconstruct the missing magnitude from the unit-quaternion relation.
-    let magnitude = (1.0 - r * r).sqrt();
+    let magnitude = r.mul_add(-r, 1.0).sqrt();
 
     let sin_phi = phi.sin();
     let cos_phi = phi.cos();
@@ -804,6 +804,9 @@ fn evaluate_quat_track(track: &SplineDynamicTrackQuat, local_frame: f32) -> Resu
         &track.knots,
     )?;
 
+    // A B-spline blends control points linearly, so the result is no longer a
+    // unit quaternion between control points. Havok normalizes it after
+    // evaluation; consumers such as Euler conversion require a unit quaternion.
     get_single_point(
         knot_span,
         track.degree as usize,
@@ -811,6 +814,7 @@ fn evaluate_quat_track(track: &SplineDynamicTrackQuat, local_frame: f32) -> Resu
         &track.knots,
         &track.track,
     )
+    .map(QuatA16::normalize)
 }
 
 fn read_transform_mask(reader: &mut Reader<'_>) -> Result<TransformMask, Error> {

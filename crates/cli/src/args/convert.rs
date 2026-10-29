@@ -5,8 +5,7 @@ use serde_hkx_features::{convert::Format, error::Result};
 use std::path::{Path, PathBuf};
 
 /// ANSI color representation command examples.
-pub const EXAMPLES: &str = color_print::cstr!(
-    r#"<blue><bold><underline>Examples</underline></bold></blue>
+pub const EXAMPLES: &str = r#"<blue><bold><underline>Examples</underline></bold></blue>
 - <blue!>hkx -> xml</blue!>
   <cyan!>hkxc convert --input</cyan!> ./defaultmale.hkx <cyan!>--format</cyan!> xml
 
@@ -18,11 +17,10 @@ pub const EXAMPLES: &str = color_print::cstr!(
 
 - <blue!>hkx(64bit) -> hkx(32bit)</blue!>
   <cyan!>hkxc convert -i</cyan!> ./defaultmale_x64.hkx <cyan!>-o</cyan!> ./defaultmale_x86.hkx <cyan!>-v</cyan!> win32 <cyan!>--log-level</cyan!> trace <cyan!>--log-file</cyan!> ./convert_x64_to_x86_bytes.log
-"#
-);
+"#;
 
 #[derive(Debug, clap::Args)]
-#[clap(arg_required_else_help = true, after_long_help = EXAMPLES)]
+#[clap(arg_required_else_help = true, after_long_help = crate::ui::paint(EXAMPLES))]
 pub(crate) struct Args {
     /// Path containing the hkx/xml file/directory
     #[clap(short, long)]

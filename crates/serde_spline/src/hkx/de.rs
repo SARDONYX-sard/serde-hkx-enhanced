@@ -138,6 +138,7 @@ fn de_animation(class_map: &ClassMap<'_>, skeleton: &Skeleton) -> Result<Animati
         &decompressor,
         num_frames,
         num_tracks,
+        spline.m_maxFramesPerBlock.max(2) as usize,
         &track_to_bone,
         skeleton,
     )?;
@@ -157,21 +158,25 @@ fn de_animation(class_map: &ClassMap<'_>, skeleton: &Skeleton) -> Result<Animati
 ///
 /// The skeleton reference pose is used as the base frame. Decoded transform
 /// tracks overwrite the corresponding bone transforms.
+///
+/// Havok blocks overlap by one frame: block `n` covers the global frames
+/// `n * (max_frames_per_block - 1) ..= (n + 1) * (max_frames_per_block - 1)`,
+/// and its splines are evaluated with a block-local frame.
 fn decode_frames(
     decompressor: &SplineDecompressor,
     num_frames: usize,
     num_tracks: usize,
+    max_frames_per_block: usize,
     track_to_bone: &[usize],
     skeleton: &Skeleton,
 ) -> Result<Vec<AnimationFrame>, Error> {
     let mut frames = Vec::with_capacity(num_frames);
+    let frames_per_block = max_frames_per_block - 1;
+    let last_block = decompressor.blocks.len().saturating_sub(1);
 
     for frame_index in 0..num_frames {
-        let time = if num_frames <= 1 {
-            0.0
-        } else {
-            frame_index as f32
-        };
+        let block_index = (frame_index / frames_per_block).min(last_block);
+        let time = (frame_index - block_index * frames_per_block) as f32;
 
         let mut transforms = skeleton
             .bones
@@ -193,7 +198,7 @@ fn decode_frames(
                 });
             }
 
-            let transform = decompressor.get_value(0, track_index, time)?;
+            let transform = decompressor.get_value(block_index, track_index, time)?;
             transforms[bone_index] = transform;
         }
 

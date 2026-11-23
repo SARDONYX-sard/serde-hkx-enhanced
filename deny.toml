@@ -73,7 +73,6 @@ ignore = [
   # rustybuzz and ttf-parser are only used through svg_to_ico for build-time
   # SVG to ICO generation. They are not included in the final binary/runtime
   # dependency tree. Waiting for resvg/usvg to migrate to maintained crates.
-  "RUSTSEC-2026-0206",
   "RUSTSEC-2026-0192",
 ]
 # If this is true, then cargo deny will use the git executable to fetch advisory database.
